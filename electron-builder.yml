@@ -1,0 +1,25 @@
+appId: com.pedrinimamans.manipdf
+productName: ManiPDF
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+# tesseract.js carga su worker y su wasm desde el sistema de archivos en runtime;
+# dentro del asar no los encontraría, así que se desempaquetan.
+asarUnpack:
+  - '**/node_modules/tesseract.js/**'
+  - '**/node_modules/tesseract.js-core/**'
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
+# Apps sin firmar: macOS pedirá confirmación la 1a vez (clic derecho > Abrir).
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+  category: Office

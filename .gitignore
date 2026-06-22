@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+.DS_Store
+*.log
+
+# Modelos de OCR de Tesseract (datos descargables, no fuente)
+*.traineddata

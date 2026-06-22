@@ -1,0 +1,1559 @@
+:root {
+  --bg: #1e1e22;
+  --bg-elev: #2a2a30;
+  --bg-toolbar: #26262c;
+  --border: #3a3a42;
+  --text: #e8e8ea;
+  --text-dim: #9a9aa2;
+  --accent: #4c8dff;
+  --accent-hover: #3a7af0;
+  --danger: #ff5c5c;
+  --page-bg: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* Solo el documento/paneles tienen scroll propio; la app nunca se desplaza entera. */
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Las barras superiores NUNCA se encogen (si no, al abrir la búsqueda/anotar
+   flexbox comprimía el menú y lo recortaba). Solo el workspace cede espacio. */
+.app > *:not(.workspace) {
+  flex-shrink: 0;
+}
+
+/* ---- Toolbar ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-title {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-count {
+  margin-left: 6px;
+  opacity: 0.7;
+}
+
+.dirty-dot {
+  color: var(--accent);
+  margin-left: 6px;
+  font-size: 10px;
+  vertical-align: middle;
+}
+
+.zoom {
+  min-width: 200px;
+  justify-content: flex-end;
+}
+
+.zoom-value {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 42px;
+  text-align: center;
+}
+
+/* ---- Buttons ---- */
+.btn {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.btn:hover:not(:disabled) {
+  background: #34343c;
+  border-color: #4a4a54;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn.icon {
+  padding: 6px 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Iconos SVG: trazo que hereda el color del botón, alineados al texto. */
+.icon {
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ---- Menu bar (superior) ---- */
+.menu-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  /* En macOS la barra actúa como barra de título: arrastrable para mover la ventana. */
+  -webkit-app-region: drag;
+}
+
+/* Deja hueco para los botones de semáforo de macOS (rojo/amarillo/verde). */
+body[data-platform='darwin'] .menu-bar {
+  padding-left: 84px;
+}
+
+/* Los elementos interactivos no deben arrastrar la ventana. */
+.menu-bar .menu,
+.menu-bar .btn,
+.menu-bar-actions,
+.menu-bar-zoom {
+  -webkit-app-region: no-drag;
+}
+
+.menu-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menu-bar-menus {
+  display: flex;
+  gap: 2px;
+}
+
+.menu-bar .menu-trigger {
+  background: none;
+  border: 1px solid transparent;
+}
+
+.menu-bar .menu-trigger:hover,
+.menu-bar .menu-trigger.active {
+  background: var(--bg-elev);
+  border-color: var(--border);
+}
+
+.menu-bar-title {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-bar-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+
+/* ---- Menus (dropdown) ---- */
+.menu {
+  position: relative;
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.menu-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 210px;
+  background: var(--bg-toolbar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+  z-index: 51;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-panel.open {
+  display: flex;
+}
+
+.menu-panel .btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 10px;
+}
+
+/* Item de menú con atajo a la derecha. */
+.menu-panel .btn.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.menu-item kbd {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+.menu-panel .btn:hover:not(:disabled) {
+  background: #34343c;
+}
+
+/* ---- Modal ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--bg-toolbar);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  width: 420px;
+  max-width: 92vw;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.modal h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.field input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.permissions {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.permissions legend {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 0 4px;
+}
+
+.permissions label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.modal-success {
+  background: rgba(76, 175, 80, 0.12);
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.modal-success code {
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.modal-success button {
+  align-self: flex-start;
+}
+
+/* ---- Optimize dialog ---- */
+.opt-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.opt-mode {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.opt-mode.active {
+  border-color: var(--accent);
+  background: rgba(76, 141, 255, 0.1);
+}
+
+.opt-mode input {
+  margin-top: 3px;
+}
+
+.opt-mode strong {
+  display: block;
+  font-size: 13px;
+}
+
+.opt-mode small {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.opt-raster {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-bottom: 12px;
+}
+
+.opt-res {
+  display: flex;
+  gap: 6px;
+}
+
+/* ---- Stamp dialog ---- */
+.full-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.hf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hf-row input[type='text'],
+.hf-row > input:not([type]) {
+  flex: 1;
+  min-width: 80px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.hf-label {
+  width: 80px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---- Separations: overlay sobre la página (modo en vivo) ---- */
+.sep-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: #fff;
+}
+
+.sep-overlay-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sep-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  font-size: 13px;
+}
+
+/* ---- Separations: panel lateral de control ---- */
+.sep-panel {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+}
+
+.sep-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sep-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.sep-ink-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sep-ink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.sep-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.sep-panel-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sep-panel-actions .btn {
+  flex: 1;
+}
+
+/* ---- Compare dialog ---- */
+.cmp-result {
+  margin-top: 12px;
+}
+
+.cmp-pages {
+  max-height: 46vh;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.cmp-page {
+  margin-bottom: 12px;
+}
+
+.cmp-page-head {
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.cmp-line {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cmp-line.add {
+  background: rgba(76, 175, 80, 0.15);
+  color: #9ae6a0;
+}
+
+.cmp-line.del {
+  background: rgba(255, 92, 92, 0.15);
+  color: #ff9b9b;
+}
+
+.cmp-add {
+  color: #6ccb72;
+}
+
+.cmp-del {
+  color: var(--danger);
+}
+
+/* ---- Forms dialog ---- */
+.modal-wide {
+  width: 540px;
+}
+
+.forms-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-right: 4px;
+}
+
+.form-field {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.form-field-name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.form-field input[type='text'],
+.form-field select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.form-readonly {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.flatten-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-right: auto;
+}
+
+/* ---- OCR dialog ---- */
+.ocr-result {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ocr-result textarea {
+  width: 100%;
+  height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  resize: vertical;
+}
+
+/* ---- Convert dialog ---- */
+.conv-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conv-section > strong {
+  font-size: 13px;
+}
+
+.conv-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ---- Annotation toolbar ---- */
+.anno-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 12px;
+  background: #222228;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.anno-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.anno-tools .btn.icon {
+  padding: 5px 9px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.anno-color input[type='color'] {
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.anno-color input[type='color']:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.anno-apply {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.anno-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---- Annotation overlay ---- */
+.anno-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  /* Habilita unidades cqh para que el texto escale con el zoom. */
+  container-type: size;
+}
+
+.anno-layer.tool-highlight,
+.anno-layer.tool-underline,
+.anno-layer.tool-rect,
+.anno-layer.tool-ink,
+.anno-layer.tool-image {
+  cursor: crosshair;
+}
+
+.anno-layer.tool-note,
+.anno-layer.tool-text {
+  cursor: text;
+}
+
+/* En modo selección, las anotaciones muestran la mano de "agarrar" (grab) para
+   indicar que se pueden arrastrar; al arrastrar, mano cerrada (grabbing). El
+   campo de edición conserva el cursor de texto. */
+.anno-layer.tool-select [data-anno-id] {
+  cursor: grab;
+}
+.anno-layer.dragging [data-anno-id],
+.anno-layer.dragging {
+  cursor: grabbing !important;
+}
+.anno-layer textarea {
+  cursor: text;
+}
+
+/* Cuadro de texto visible (se graba como texto real en el PDF) */
+.anno-text {
+  position: absolute;
+  line-height: 1.2;
+  white-space: pre-wrap;
+  max-width: 60%;
+}
+
+.anno-text.selected {
+  outline: 1px dashed var(--accent);
+}
+
+.anno-text textarea {
+  border: none;
+  background: rgba(255, 255, 255, 0.6);
+  font-family: inherit;
+  line-height: 1.2;
+  resize: both;
+  min-width: 80px;
+  min-height: 1.4em;
+  outline: none;
+  padding: 0;
+}
+
+.anno-text-content {
+  display: block;
+}
+
+.anno-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.anno-note {
+  position: absolute;
+  min-width: 28px;
+  max-width: 220px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  font-size: 12px;
+  color: #222;
+  cursor: pointer;
+}
+
+.anno-note.selected {
+  outline: 2px solid var(--accent);
+}
+
+.anno-note textarea {
+  width: 180px;
+  height: 64px;
+  border: none;
+  background: transparent;
+  resize: both;
+  font: inherit;
+  color: #222;
+  outline: none;
+}
+
+.anno-note-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.anno-note-del {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ---- Tab bar (multi-documento) ---- */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 6px 0;
+  background: #1b1b20;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 6px 8px 6px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-dirty {
+  color: var(--accent);
+  font-size: 9px;
+}
+
+.tab-close {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.tab-new {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-new:hover {
+  color: var(--text);
+}
+
+.search-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 34px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ---- Campo de búsqueda fijo en la barra superior ---- */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  -webkit-app-region: no-drag;
+}
+
+.search-field-icon {
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+}
+
+.search-field input {
+  width: 160px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 4px;
+}
+
+.search-field .btn.icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* ---- Search highlights (resaltado azul translúcido SOBRE el texto original;
+   no cambia la letra ni su tamaño, solo la marca) ---- */
+.search-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.search-hit {
+  position: absolute;
+  background: rgba(41, 98, 255, 0.4);
+  border-radius: 2px;
+}
+
+.search-hit.current {
+  background: rgba(11, 72, 255, 0.55);
+  box-shadow: 0 0 0 1.5px #2962ff;
+}
+
+/* ---- Redact mode ---- */
+.redact-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 92, 92, 0.12);
+  border-bottom: 1px solid rgba(255, 92, 92, 0.35);
+}
+
+.redact-msg {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.redact-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.redact-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  cursor: crosshair;
+}
+
+.redact-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.redact-rect {
+  fill: #000000;
+  fill-opacity: 0.85;
+  cursor: pointer;
+}
+
+.redact-rect.draft {
+  fill-opacity: 0.5;
+}
+
+/* ---- Form builder mode ---- */
+.formbuilder-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: rgba(76, 141, 255, 0.12);
+  border-bottom: 1px solid rgba(76, 141, 255, 0.35);
+}
+
+.formbuilder-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  cursor: crosshair;
+}
+
+.formbuilder-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.formbuilder-rect {
+  fill: rgba(76, 141, 255, 0.18);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+.formbuilder-rect.draft {
+  fill: rgba(76, 141, 255, 0.28);
+}
+
+.formbuilder-label {
+  position: absolute;
+  transform: translateY(-100%);
+  font-size: 10px;
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 4px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---- Workspace layout ---- */
+.workspace {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative; /* para la pestaña flotante del panel de páginas */
+}
+
+/* ---- Bookmarks panel ---- */
+.bookmarks-panel {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+}
+
+.panel-title {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bookmarks-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.bookmark {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.bookmark:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* ---- Link layer ---- */
+.link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.pdf-link {
+  position: absolute;
+  padding: 0;
+  border: none;
+  background: rgba(76, 141, 255, 0.12);
+  border-bottom: 1px solid rgba(76, 141, 255, 0.5);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.pdf-link:hover {
+  background: rgba(76, 141, 255, 0.25);
+}
+
+/* En modo selección, la capa de anotaciones deja pasar el ratón a los enlaces;
+   sus propios elementos siguen siendo interactivos. */
+.anno-layer.tool-select {
+  pointer-events: none;
+}
+.anno-layer.tool-select .anno-note,
+.anno-layer.tool-select .anno-text {
+  pointer-events: auto;
+}
+.anno-layer.tool-select .anno-svg {
+  pointer-events: none;
+}
+.anno-layer.tool-select .anno-svg * {
+  pointer-events: auto;
+}
+
+/* Barra de anotación CERRADA → capa de SOLO LECTURA: las anotaciones siguen
+   visibles pero no se pueden dibujar, mover ni editar (evita seguir anotando
+   tras pulsar ✕). Se reactivan al reabrir "Anotar". */
+.anno-layer:not(.editing),
+.anno-layer:not(.editing) * {
+  pointer-events: none !important;
+}
+
+/* ---- Thumbnail panel ---- */
+.thumb-panel {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-right: 1px solid var(--border);
+}
+
+.thumb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thumb-actions .btn.icon {
+  padding: 4px 8px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.danger-btn:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+.thumb-hint {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.thumb-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.thumb {
+  position: relative;
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  padding: 2px;
+  background: transparent;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.thumb:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.thumb.selected {
+  border-color: var(--accent);
+  background: rgba(76, 141, 255, 0.12);
+}
+
+.thumb.drop-target {
+  border-top: 2px solid var(--accent);
+}
+
+.thumb-canvas {
+  display: block;
+  background: var(--page-bg);
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.thumb-number {
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* ---- Scrollbars siempre visibles (semi-transparentes) ---- */
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+  background-clip: padding-box;
+}
+
+/* ---- Mano (pan) estilo InDesign ---- */
+.content.hand {
+  cursor: grab;
+}
+.content.hand:active {
+  cursor: grabbing;
+}
+
+/* ---- Panel de páginas (derecha, colapsable) ---- */
+.pages-panel {
+  width: 200px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+}
+
+.pages-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.pages-history {
+  display: flex;
+  gap: 2px;
+}
+
+.pages-history .btn.icon {
+  padding: 4px 6px;
+}
+
+/* Pestaña flotante para mostrar/ocultar el panel (pegada al borde derecho, arriba). */
+.pages-toggle {
+  position: absolute;
+  top: 12px;
+  z-index: 20;
+  width: 22px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  background: var(--bg-elev);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.pages-toggle:hover {
+  background: #34343c;
+}
+
+/* Acciones de página: rejilla 2 columnas, icono + etiqueta (bien visibles). */
+.pages-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.page-action:hover:not(:disabled) {
+  background: #34343c;
+  border-color: var(--accent);
+}
+
+.page-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.page-action-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.page-action-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.page-action.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+/* ---- Content / Viewer ---- */
+.content {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.viewer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  /* Permite scroll horizontal cuando una página (con zoom) es más ancha que el área. */
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.page-wrapper {
+  position: relative;
+  background: var(--page-bg);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+}
+
+.page-canvas {
+  display: block;
+  border-radius: 2px;
+}
+
+/* ---- Capa de texto seleccionable (pdf.js) ---- */
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 3;
+}
+
+.textLayer span,
+.textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.textLayer span.markedContent {
+  top: 0;
+  height: 0;
+}
+
+.textLayer ::selection {
+  background: rgba(0, 100, 255, 0.35);
+}
+
+.page-number {
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ---- States ---- */
+.empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+
+.empty-icon {
+  font-size: 56px;
+}
+
+.empty-state h2 {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.recents {
+  margin-top: 24px;
+  width: 280px;
+  max-width: 80vw;
+}
+
+.recents-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.recent-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-item:hover {
+  background: #34343c;
+}
+
+.viewer-loading,
+.viewer-error {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.viewer-error {
+  color: var(--danger);
+}
+
+.error-banner {
+  background: rgba(255, 92, 92, 0.12);
+  color: var(--danger);
+  padding: 8px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255, 92, 92, 0.3);
+}
