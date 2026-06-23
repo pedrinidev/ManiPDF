@@ -38,24 +38,22 @@ interface RedactContextValue {
 const RedactContext = createContext<RedactContextValue | null>(null)
 
 export function RedactProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { state, applyDocUpdate, reportError } = useDocument()
+  const { state, applyDocUpdate, reportError, editMode, requestEditMode, exitEditMode, registerEditor } =
+    useDocument()
   const { pdf } = usePdf()
 
-  const [active, setActive] = useState(false)
+  // El modo "censurar" está activo cuando el modo de edición del store es 'redact'.
+  const active = editMode === 'redact'
   const [rects, setRects] = useState<RedactRect[]>([])
   const [busy, setBusy] = useState(false)
 
-  // Al cambiar de documento, salimos del modo y limpiamos.
+  // Al cambiar de documento, limpiamos las zonas en curso (el store sale del modo).
   useEffect(() => {
-    setActive(false)
     setRects([])
   }, [state.doc?.id])
 
-  const start = useCallback(() => setActive(true), [])
-  const exit = useCallback(() => {
-    setActive(false)
-    setRects([])
-  }, [])
+  const start = useCallback(() => void requestEditMode('redact'), [requestEditMode])
+  const exit = useCallback(() => void requestEditMode(null), [requestEditMode])
 
   const addRect = useCallback(
     (page: number, rect: RectArea) =>
@@ -82,8 +80,8 @@ export function RedactProvider({ children }: { children: ReactNode }): JSX.Eleme
       }
       const updated = await redactClient.apply(state.doc.id, pages)
       applyDocUpdate(updated)
-      setActive(false)
       setRects([])
+      exitEditMode()
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al redactar')
@@ -91,7 +89,13 @@ export function RedactProvider({ children }: { children: ReactNode }): JSX.Eleme
     } finally {
       setBusy(false)
     }
-  }, [state.doc, pdf, rects, applyDocUpdate, reportError])
+  }, [state.doc, pdf, rects, applyDocUpdate, reportError, exitEditMode])
+
+  // Registra en el coordinador si hay zonas sin grabar y cómo grabarlas/descartarlas.
+  const discard = useCallback(() => setRects([]), [])
+  useEffect(() => {
+    registerEditor('redact', { hasPending: rects.length > 0, apply, discard })
+  }, [rects, apply, discard, registerEditor])
 
   const value = useMemo(
     () => ({ active, rects, busy, start, exit, addRect, removeRect, apply }),

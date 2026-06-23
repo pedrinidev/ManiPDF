@@ -69,8 +69,11 @@ export function SecurityDialog(): JSX.Element {
 
             {savedPath ? (
               <div className="modal-success">
-                ✅ PDF protegido guardado en:
+                <span>✅ PDF protegido guardado en:</span>
                 <code>{savedPath}</code>
+                <button className="btn" onClick={() => window.api.app.reveal(savedPath)}>
+                  Mostrar en carpeta
+                </button>
               </div>
             ) : (
               <>

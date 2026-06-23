@@ -19,12 +19,13 @@ export function OcrDialog(): JSX.Element {
   const [lang, setLang] = useState<OcrLang>('spa')
   const [busy, setBusy] = useState(false)
   const [text, setText] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  // Aviso de resultado: texto + (opcional) ruta de archivo guardado para revelar.
+  const [note, setNote] = useState<{ text: string; path?: string } | null>(null)
 
   const close = (): void => {
     setOpen(false)
     setText(null)
-    setMessage(null)
+    setNote(null)
   }
 
   const handleError = (err: unknown): void => {
@@ -45,7 +46,7 @@ export function OcrDialog(): JSX.Element {
   const extract = async (): Promise<void> => {
     setBusy(true)
     setText(null)
-    setMessage(null)
+    setNote(null)
     try {
       const pages = await rasterize()
       const result = await ocrClient.extract(lang, pages.map((p) => p.jpegBase64))
@@ -61,12 +62,12 @@ export function OcrDialog(): JSX.Element {
     if (!state.doc) return
     setBusy(true)
     setText(null)
-    setMessage(null)
+    setNote(null)
     try {
       const pages = await rasterize()
       const updated = await ocrClient.searchable(state.doc.id, lang, pages)
       applyDocUpdate(updated)
-      setMessage('✅ PDF buscable creado (texto invisible añadido). Pulsa «Guardar» para conservarlo.')
+      setNote({ text: '✅ PDF buscable creado (texto invisible añadido). Pulsa «Guardar» para conservarlo.' })
     } catch (err) {
       handleError(err)
     } finally {
@@ -78,7 +79,7 @@ export function OcrDialog(): JSX.Element {
     if (!text) return
     try {
       const filePath = await ocrClient.saveText(text)
-      setMessage(`✅ Texto guardado en: ${filePath}`)
+      setNote({ text: '✅ Texto guardado en:', path: filePath })
     } catch (err) {
       handleError(err)
     }
@@ -130,7 +131,17 @@ export function OcrDialog(): JSX.Element {
               </div>
             )}
 
-            {message && <div className="modal-success">{message}</div>}
+            {note && (
+              <div className="modal-success">
+                <span>{note.text}</span>
+                {note.path && <code>{note.path}</code>}
+                {note.path && (
+                  <button className="btn" onClick={() => window.api.app.reveal(note.path!)}>
+                    Mostrar en carpeta
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="modal-actions">
               <button className="btn" onClick={close}>

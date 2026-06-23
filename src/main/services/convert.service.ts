@@ -6,6 +6,10 @@ import { DocumentError } from './document.service'
 import { FileService } from './file.service'
 import type { ImageFormat } from '@shared/ipc-contract'
 
+/** Dimensiones de una página Carta en puntos PDF (8.5 × 11 pulgadas). */
+const LETTER_SHORT = 612
+const LETTER_LONG = 792
+
 /**
  * Lógica del módulo "convert": PDF -> imágenes e imágenes -> PDF.
  *
@@ -57,8 +61,18 @@ export class ConvertService {
           : await pdf.embedPng(bytes).catch(() => {
               throw new DocumentError('INVALID_PDF', `Imagen no soportada: ${basename(path)}`)
             })
-      const page = pdf.addPage([image.width, image.height])
-      page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height })
+      // Página tamaño Carta, orientada según la imagen; la imagen se escala para
+      // caber dentro conservando su proporción y se centra. Antes la página tomaba
+      // el tamaño en píxeles de la imagen (p. ej. 3000pt ≈ 106 cm), por lo que se
+      // creaba enorme.
+      const landscape = image.width > image.height
+      const pageW = landscape ? LETTER_LONG : LETTER_SHORT
+      const pageH = landscape ? LETTER_SHORT : LETTER_LONG
+      const page = pdf.addPage([pageW, pageH])
+      const scale = Math.min(pageW / image.width, pageH / image.height)
+      const w = image.width * scale
+      const h = image.height * scale
+      page.drawImage(image, { x: (pageW - w) / 2, y: (pageH - h) / 2, width: w, height: h })
     }
 
     const target = await this.files.pickSavePath(window, 'imagenes.pdf')

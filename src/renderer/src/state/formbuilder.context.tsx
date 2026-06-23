@@ -43,26 +43,25 @@ const FormBuilderContext = createContext<FormBuilderContextValue | null>(null)
 const LABELS: Record<FieldType, string> = { text: 'texto', checkbox: 'casilla', dropdown: 'desplegable' }
 
 export function FormBuilderProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { state, applyDocUpdate, reportError } = useDocument()
+  const { state, applyDocUpdate, reportError, editMode, requestEditMode, exitEditMode, registerEditor } =
+    useDocument()
 
-  const [active, setActive] = useState(false)
+  // El modo "crear campos" está activo cuando el modo de edición es 'fields'.
+  const active = editMode === 'fields'
   const [fieldType, setFieldType] = useState<FieldType>('text')
   const [options, setOptions] = useState('')
   const [fieldName, setFieldName] = useState('')
   const [fields, setFields] = useState<PlacedField[]>([])
   const [busy, setBusy] = useState(false)
 
+  // Al cambiar de documento, limpiamos los campos en curso (el store sale del modo).
   useEffect(() => {
-    setActive(false)
-    setFields([])
-  }, [state.doc?.id])
-
-  const start = useCallback(() => setActive(true), [])
-  const exit = useCallback(() => {
-    setActive(false)
     setFields([])
     setFieldName('')
-  }, [])
+  }, [state.doc?.id])
+
+  const start = useCallback(() => void requestEditMode('fields'), [requestEditMode])
+  const exit = useCallback(() => void requestEditMode(null), [requestEditMode])
 
   const addField = useCallback(
     (page: number, rect: RectArea) => {
@@ -93,8 +92,9 @@ export function FormBuilderProvider({ children }: { children: ReactNode }): JSX.
         return f
       })
       applyDocUpdate(await formsClient.create(state.doc.id, payload))
-      setActive(false)
       setFields([])
+      setFieldName('')
+      exitEditMode()
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al crear los campos')
@@ -102,7 +102,16 @@ export function FormBuilderProvider({ children }: { children: ReactNode }): JSX.
     } finally {
       setBusy(false)
     }
-  }, [state.doc, fields, applyDocUpdate, reportError])
+  }, [state.doc, fields, applyDocUpdate, reportError, exitEditMode])
+
+  // Registra en el coordinador si hay campos sin grabar y cómo grabarlos/descartarlos.
+  const discard = useCallback(() => {
+    setFields([])
+    setFieldName('')
+  }, [])
+  useEffect(() => {
+    registerEditor('fields', { hasPending: fields.length > 0, apply, discard })
+  }, [fields, apply, discard, registerEditor])
 
   const value = useMemo(
     () => ({

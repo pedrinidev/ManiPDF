@@ -4,7 +4,7 @@ import { Icon } from './Icon'
 
 /** Barra de pestañas: un documento por pestaña, estilo navegador. */
 export function TabBar(): JSX.Element | null {
-  const { state, setActive, closeDoc, openDialog, hasUnsavedAnnotations } = useDocument()
+  const { state, setActive, closeDoc, openDialog, hasUnsavedEdits } = useDocument()
   if (state.docs.length === 0) return null
 
   const onClose = (e: MouseEvent, id: string): void => {
@@ -22,7 +22,7 @@ export function TabBar(): JSX.Element | null {
           onClick={() => setActive(d.id)}
         >
           <span className="tab-name">{d.fileName}</span>
-          {(d.isDirty || (d.id === state.activeId && hasUnsavedAnnotations)) && (
+          {(d.isDirty || (d.id === state.activeId && hasUnsavedEdits)) && (
             <span className="tab-dirty" title="Cambios sin guardar">●</span>
           )}
           <button className="tab-close" title="Cerrar pestaña" onClick={(e) => onClose(e, d.id)}>

@@ -15,11 +15,12 @@ import { StampDialog } from './StampDialog'
 import { CombineDialog } from './CombineDialog'
 import { CompareDialog } from './CompareDialog'
 import { SearchBar } from './SearchBar'
+import { InfoDialog } from './InfoDialog'
 import { Icon } from './Icon'
 
 /** Barra de menú superior (Archivo / Editar / Ver / Herramientas) estilo escritorio. */
 export function MenuBar(): JSX.Element {
-  const { state, openDialog, save, saveAs, print, closeDoc, setZoom, hasUnsavedAnnotations, undo, redo, canUndo, canRedo } =
+  const { state, openDialog, save, saveAs, print, closeDoc, setZoom, hasUnsavedEdits, undo, redo, canUndo, canRedo } =
     useDocument()
   const { start: startRedact } = useRedact()
   const { start: startFields } = useFormBuilder()
@@ -150,13 +151,15 @@ export function MenuBar(): JSX.Element {
             Separación color…
           </button>
         </Menu>
+
+        <InfoDialog />
       </div>
 
       <div className="menu-bar-title">
         {doc ? (
           <>
             {doc.fileName}
-            {(doc.isDirty || hasUnsavedAnnotations) && (
+            {(doc.isDirty || hasUnsavedEdits) && (
               <span className="dirty-dot" title="Cambios sin guardar">
                 ●
               </span>

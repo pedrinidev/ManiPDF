@@ -21,22 +21,57 @@ interface DocHistory {
   redo: string[]
 }
 
+/** Modos de edición mutuamente excluyentes (solo uno activo a la vez). */
+export type EditorKind = 'annotate' | 'fields' | 'redact'
+
+/** Cómo grabar (apply) o descartar (discard) los cambios en curso de un modo. */
+interface EditorDescriptor {
+  apply: () => Promise<void>
+  discard: () => void
+}
+
+const EDIT_LABELS: Record<EditorKind, string> = {
+  annotate: 'Anotar',
+  fields: 'Crear campos',
+  redact: 'Censurar'
+}
+
 /** Estado interno del reducer (lista de documentos abiertos + activo). */
 interface InternalState {
   docs: OpenDocumentDTO[]
   activeId: DocumentId | null
   status: 'idle' | 'loading' | 'ready' | 'error'
   error: string | null
-  zoom: number
+  /** Nivel de zoom POR documento (cada pestaña recuerda el suyo). */
+  zooms: Record<DocumentId, number>
   history: Record<DocumentId, DocHistory>
 }
 
-/** Máximo de pasos de deshacer guardados por documento (acota la memoria). */
-const MAX_HISTORY = 25
+/**
+ * Límites del historial de deshacer POR DOCUMENTO. Se acota por nº de pasos y,
+ * sobre todo, por memoria: los snapshots son el PDF en base64, así que en
+ * documentos grandes se conservan menos pasos (pero siempre al menos uno).
+ */
+const HISTORY_MAX_STEPS = 30
+const HISTORY_MAX_BYTES = 120 * 1024 * 1024 // ~120 MB de snapshots por documento
 
-/** Estado expuesto a la UI: incluye `doc` (el activo) por compatibilidad. */
+/** Recorta una pila de snapshots a los límites de pasos y memoria (deja ≥1). */
+function trimHistory(stack: string[]): string[] {
+  const byCount = stack.length > HISTORY_MAX_STEPS ? stack.slice(-HISTORY_MAX_STEPS) : stack
+  let total = byCount.reduce((sum, s) => sum + s.length, 0)
+  let start = 0
+  while (total > HISTORY_MAX_BYTES && start < byCount.length - 1) {
+    total -= byCount[start].length
+    start += 1
+  }
+  return start > 0 ? byCount.slice(start) : byCount
+}
+
+/** Estado expuesto a la UI: incluye `doc` (el activo) y su `zoom` derivado. */
 export interface DocumentState extends InternalState {
   doc: OpenDocumentDTO | null
+  /** Zoom del documento activo (derivado de `zooms`). */
+  zoom: number
 }
 
 const initialState: InternalState = {
@@ -44,7 +79,7 @@ const initialState: InternalState = {
   activeId: null,
   status: 'idle',
   error: null,
-  zoom: 1,
+  zooms: {},
   history: {}
 }
 
@@ -75,14 +110,14 @@ function reducer(state: InternalState, action: Action): InternalState {
         activeId: action.doc.id,
         status: 'ready',
         error: null,
-        zoom: 1,
+        zooms: { ...state.zooms, [action.doc.id]: 1 },
         history: { ...state.history, [action.doc.id]: { undo: [], redo: [] } }
       }
     case 'DOC_UPDATED': {
       // Guarda el estado ANTERIOR en la pila de deshacer y limpia rehacer.
       const prev = state.docs.find((d) => d.id === action.doc.id)
       const h = state.history[action.doc.id] ?? { undo: [], redo: [] }
-      const undo = prev ? [...h.undo, prev.dataBase64].slice(-MAX_HISTORY) : h.undo
+      const undo = prev ? trimHistory([...h.undo, prev.dataBase64]) : h.undo
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.doc.id ? action.doc : d)),
@@ -101,12 +136,20 @@ function reducer(state: InternalState, action: Action): InternalState {
         state.activeId === action.id ? (docs.length > 0 ? docs[docs.length - 1].id : null) : state.activeId
       const history = { ...state.history }
       delete history[action.id]
-      return { ...state, docs, activeId, history, status: docs.length > 0 ? 'ready' : 'idle' }
+      const zooms = { ...state.zooms }
+      delete zooms[action.id]
+      return { ...state, docs, activeId, history, zooms, status: docs.length > 0 ? 'ready' : 'idle' }
     }
     case 'SET_ACTIVE':
       return { ...state, activeId: action.id }
-    case 'SET_ZOOM':
-      return { ...state, zoom: clamp(action.zoom, MIN_ZOOM, MAX_ZOOM) }
+    case 'SET_ZOOM': {
+      // El zoom afecta solo al documento activo.
+      if (!state.activeId) return state
+      return {
+        ...state,
+        zooms: { ...state.zooms, [state.activeId]: clamp(action.zoom, MIN_ZOOM, MAX_ZOOM) }
+      }
+    }
     case 'MARK_SAVED':
       return {
         ...state,
@@ -121,7 +164,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const h = state.history[action.id]
       if (!cur || !h || h.undo.length === 0) return state
       const undo = h.undo.slice(0, -1)
-      const redo = [...h.redo, cur.dataBase64].slice(-MAX_HISTORY)
+      const redo = trimHistory([...h.redo, cur.dataBase64])
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.id ? action.doc : d)),
@@ -135,7 +178,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const h = state.history[action.id]
       if (!cur || !h || h.redo.length === 0) return state
       const redo = h.redo.slice(0, -1)
-      const undo = [...h.undo, cur.dataBase64].slice(-MAX_HISTORY)
+      const undo = trimHistory([...h.undo, cur.dataBase64])
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.id ? action.doc : d)),
@@ -173,13 +216,22 @@ interface DocumentContextValue {
   /** Muestra un error en el banner global. */
   reportError: (message: string) => void
   /**
-   * El módulo de anotaciones registra aquí si hay anotaciones SIN grabar y una
-   * función para grabarlas. Así Guardar/Cerrar pueden incrustarlas antes y el
-   * documento se considera "con cambios" mientras existan.
+   * Coordinador de los modos de edición (Anotar / Crear campos / Censurar).
+   * `editMode` es el modo activo (o null). `requestEditMode` cambia de modo y, si
+   * el actual tiene cambios sin grabar, pregunta antes (grabar/descartar/cancelar);
+   * devuelve false si el usuario cancela. `exitEditMode` sale sin preguntar (tras
+   * grabar). Cada modo se registra con `registerEditor` indicando si tiene cambios
+   * pendientes y cómo grabarlos/descartarlos.
    */
-  registerPending: (has: boolean, flush: () => Promise<void>) => void
-  /** true si el documento activo tiene anotaciones sin grabar. */
-  hasUnsavedAnnotations: boolean
+  editMode: EditorKind | null
+  requestEditMode: (mode: EditorKind | null) => Promise<boolean>
+  exitEditMode: () => void
+  registerEditor: (
+    kind: EditorKind,
+    descriptor: { hasPending: boolean; apply: () => Promise<void>; discard: () => void }
+  ) => void
+  /** true si el modo de edición activo tiene cambios sin grabar. */
+  hasUnsavedEdits: boolean
   /** Deshacer/rehacer la última edición del documento activo. */
   undo: () => Promise<void>
   redo: () => Promise<void>
@@ -192,21 +244,79 @@ const DocumentContext = createContext<DocumentContextValue | null>(null)
 export function DocumentProvider({ children }: { children: ReactNode }): JSX.Element {
   const [internal, dispatch] = useReducer(reducer, initialState)
 
-  // Anotaciones sin grabar del documento activo + función para grabarlas.
-  const flushRef = useRef<(() => Promise<void>) | null>(null)
-  const [hasUnsavedAnnotations, setHasUnsavedAnnotations] = useState(false)
-  const registerPending = useCallback((has: boolean, flush: () => Promise<void>) => {
-    setHasUnsavedAnnotations(has)
-    flushRef.current = flush
+  // ---- Coordinador de modo de edición (Anotar / Crear campos / Censurar) -----
+  // Solo un modo activo a la vez. Cada modo registra si tiene cambios sin grabar y
+  // cómo grabarlos/descartarlos, para poder avisar antes de cambiar de modo, cerrar
+  // la pestaña o cambiar de documento.
+  const [editMode, setEditModeState] = useState<EditorKind | null>(null)
+  const editorsRef = useRef<Record<EditorKind, EditorDescriptor | null>>({
+    annotate: null,
+    fields: null,
+    redact: null
+  })
+  const [pendingFlags, setPendingFlags] = useState<Record<EditorKind, boolean>>({
+    annotate: false,
+    fields: false,
+    redact: false
+  })
+
+  const registerEditor = useCallback<DocumentContextValue['registerEditor']>((kind, descriptor) => {
+    editorsRef.current[kind] = { apply: descriptor.apply, discard: descriptor.discard }
+    setPendingFlags((prev) =>
+      prev[kind] === descriptor.hasPending ? prev : { ...prev, [kind]: descriptor.hasPending }
+    )
   }, [])
+
+  const hasUnsavedEdits = editMode != null && pendingFlags[editMode]
+
+  const exitEditMode = useCallback(() => setEditModeState(null), [])
+
+  const requestEditMode = useCallback<DocumentContextValue['requestEditMode']>(
+    async (next) => {
+      const cur = editMode
+      if (cur === next) return true
+      if (cur) {
+        const editor = editorsRef.current[cur]
+        if (pendingFlags[cur] && editor) {
+          const choice = await window.api.app.confirmUnsaved({
+            message: `Tienes cambios sin grabar en "${EDIT_LABELS[cur]}"`,
+            detail: '¿Quieres grabarlos antes de continuar?',
+            saveLabel: 'Grabar'
+          })
+          if (choice === 'cancel') return false
+          if (choice === 'save') await editor.apply()
+          else editor.discard()
+        } else {
+          editor?.discard()
+        }
+      }
+      setEditModeState(next)
+      return true
+    },
+    [editMode, pendingFlags]
+  )
+
+  // Al cambiar de documento (o pestaña), se sale del modo de edición: cada modo
+  // limpia sus datos por su cuenta, así no "se cuelan" en otro documento.
+  useEffect(() => {
+    setEditModeState(null)
+  }, [internal.activeId])
 
   const activeDoc = useMemo(
     () => internal.docs.find((d) => d.id === internal.activeId) ?? null,
     [internal.docs, internal.activeId]
   )
-  const state: DocumentState = useMemo(() => ({ ...internal, doc: activeDoc }), [internal, activeDoc])
+  const state: DocumentState = useMemo(
+    () => ({
+      ...internal,
+      doc: activeDoc,
+      zoom: activeDoc ? internal.zooms[activeDoc.id] ?? 1 : 1
+    }),
+    [internal, activeDoc]
+  )
 
   const openDialog = useCallback(async () => {
+    if (!(await requestEditMode(null))) return // protege la edición en curso
     dispatch({ type: 'LOADING' })
     try {
       const doc = await documentClient.open()
@@ -225,10 +335,11 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
     } catch (err) {
       handleError(err, dispatch)
     }
-  }, [internal.docs])
+  }, [internal.docs, requestEditMode])
 
   const openByPath = useCallback(
     async (filePath: string) => {
+      if (!(await requestEditMode(null))) return // protege la edición en curso
       // Mismo archivo ya abierto → activar su pestaña en vez de duplicar.
       const existing = internal.docs.find((d) => d.filePath === filePath)
       if (existing) {
@@ -244,19 +355,22 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         handleError(err, dispatch)
       }
     },
-    [internal.docs]
+    [internal.docs, requestEditMode]
   )
 
-  // Informa al main si hay cambios sin guardar (incluye anotaciones pendientes).
-  const anyDirty = internal.docs.some((d) => d.isDirty) || hasUnsavedAnnotations
+  // Informa al main si hay cambios sin guardar (incluye edición en curso).
+  const anyDirty = internal.docs.some((d) => d.isDirty) || hasUnsavedEdits
   useEffect(() => {
     window.api.app.setDirty(anyDirty)
   }, [anyDirty])
 
-  // Graba las anotaciones pendientes (si las hay) antes de guardar/cerrar.
+  // Graba la edición en curso (si la hay) antes de guardar/cerrar.
   const flushPending = useCallback(async () => {
-    if (hasUnsavedAnnotations && flushRef.current) await flushRef.current()
-  }, [hasUnsavedAnnotations])
+    if (editMode && pendingFlags[editMode]) {
+      const editor = editorsRef.current[editMode]
+      if (editor) await editor.apply()
+    }
+  }, [editMode, pendingFlags])
 
   const save = useCallback(async () => {
     if (!activeDoc) return
@@ -295,8 +409,8 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
       if (!target) return
       const targetDoc = internal.docs.find((d) => d.id === target)
       const isActive = target === activeDoc?.id
-      // "Sucio" = cambios grabados sin guardar O anotaciones pendientes (del activo).
-      const dirty = !!targetDoc?.isDirty || (isActive && hasUnsavedAnnotations)
+      // "Sucio" = cambios grabados sin guardar O edición en curso (del activo).
+      const dirty = !!targetDoc?.isDirty || (isActive && hasUnsavedEdits)
 
       if (dirty) {
         const choice = await window.api.app.confirmUnsaved({
@@ -326,7 +440,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         dispatch({ type: 'CLOSED', id: target })
       }
     },
-    [activeDoc, internal.docs, hasUnsavedAnnotations, flushPending]
+    [activeDoc, internal.docs, hasUnsavedEdits, flushPending]
   )
 
   const activeHistory = activeDoc ? internal.history[activeDoc.id] : undefined
@@ -357,7 +471,15 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
     }
   }, [activeDoc, internal.history])
 
-  const setActive = useCallback((id: DocumentId) => dispatch({ type: 'SET_ACTIVE', id }), [])
+  const setActive = useCallback(
+    async (id: DocumentId) => {
+      if (id === activeDoc?.id) return
+      // Si hay edición en curso en el documento actual, pregunta antes de cambiar.
+      if (!(await requestEditMode(null))) return
+      dispatch({ type: 'SET_ACTIVE', id })
+    },
+    [activeDoc?.id, requestEditMode]
+  )
   const setZoom = useCallback((zoom: number) => dispatch({ type: 'SET_ZOOM', zoom }), [])
   const applyDocUpdate = useCallback((doc: OpenDocumentDTO) => dispatch({ type: 'DOC_UPDATED', doc }), [])
   const reportError = useCallback((message: string) => dispatch({ type: 'ERROR', message }), [])
@@ -376,8 +498,11 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         setZoom,
         applyDocUpdate,
         reportError,
-        registerPending,
-        hasUnsavedAnnotations,
+        editMode,
+        requestEditMode,
+        exitEditMode,
+        registerEditor,
+        hasUnsavedEdits,
         undo,
         redo,
         canUndo,

@@ -29,6 +29,7 @@ export type IconName =
   | 'image'
   | 'undo'
   | 'redo'
+  | 'info'
 
 const PATHS: Record<IconName, JSX.Element> = {
   search: (
@@ -151,6 +152,13 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <path d="M15 14l5-5-5-5" />
       <path d="M20 9H9a5 5 0 0 0 0 10h3" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="11" x2="12" y2="16" />
+      <line x1="12" y1="8" x2="12" y2="8" />
     </>
   )
 }

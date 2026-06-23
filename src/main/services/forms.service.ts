@@ -19,6 +19,9 @@ import type {
   OpenDocumentDTO
 } from '@shared/ipc-contract'
 
+/** Tamaño de fuente fijo (pt) para los campos nuevos de texto/desplegable. */
+const FIELD_FONT_SIZE = 11
+
 /**
  * Lógica del módulo "forms": detectar y rellenar campos de formulario PDF.
  * Usa la API de formularios de pdf-lib (AcroForm).
@@ -81,13 +84,19 @@ export class FormsService {
       }
       try {
         if (field.type === 'text') {
-          form.createTextField(field.name).addToPage(page, box)
+          const tf = form.createTextField(field.name)
+          tf.addToPage(page, box)
+          // Tamaño de fuente FIJO: por defecto pdf-lib auto-escala el texto a la
+          // altura de la caja (cajas grandes → texto enorme). Lo fijamos a un
+          // tamaño legible y constante, independiente del tamaño del campo.
+          tf.setFontSize(FIELD_FONT_SIZE)
         } else if (field.type === 'checkbox') {
           form.createCheckBox(field.name).addToPage(page, box)
         } else {
           const dd = form.createDropdown(field.name)
           if (field.options.length > 0) dd.addOptions(field.options)
           dd.addToPage(page, box)
+          dd.setFontSize(FIELD_FONT_SIZE)
         }
         used.add(field.name)
       } catch {

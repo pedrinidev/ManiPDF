@@ -100,6 +100,15 @@ export type IpcErrorCode =
 export type DocumentId = string
 
 /** Metadatos visibles del documento. */
+/** Un tamaño de página presente en el documento y cuántas páginas lo usan. */
+export interface PageSizeGroup {
+  widthPt: number
+  heightPt: number
+  /** Etiqueta lista para mostrar, p. ej. "21.6 × 27.9 cm · Carta". */
+  label: string
+  count: number
+}
+
 export interface DocumentMetadataDTO {
   title: string | null
   author: string | null
@@ -109,6 +118,18 @@ export interface DocumentMetadataDTO {
   producer: string | null
   creationDate: string | null
   modificationDate: string | null
+  /** Número de páginas. */
+  pageCount: number
+  /** Tamaño del archivo en bytes. */
+  fileSize: number
+  /** Versión del PDF (p. ej. "1.7"), o null si no se detecta. */
+  pdfVersion: string | null
+  /** Si el documento está cifrado. */
+  encrypted: boolean
+  /** Espacio(s) de color detectado(s), etiqueta legible (heurístico). */
+  colorSpace: string
+  /** Tamaños de página agrupados (uno por tamaño distinto). */
+  pageSizes: PageSizeGroup[]
 }
 
 /** Giro relativo a aplicar a una página, en grados (múltiplos de 90). */

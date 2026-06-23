@@ -72,10 +72,12 @@ interface AnnotationsContextValue {
 const AnnotationsContext = createContext<AnnotationsContextValue | null>(null)
 
 export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { state, applyDocUpdate, reportError, registerPending } = useDocument()
+  const { state, applyDocUpdate, reportError, editMode, requestEditMode, exitEditMode, registerEditor } =
+    useDocument()
   const docId = state.doc?.id ?? null
 
-  const [toolbarOpen, setToolbarOpenState] = useState(false)
+  // La barra de anotaciones está abierta cuando el modo de edición es "annotate".
+  const toolbarOpen = editMode === 'annotate'
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [tool, setToolState] = useState<AnnotationTool>('select')
   const [color, setColor] = useState<string>(DEFAULT_COLORS.highlight)
@@ -92,17 +94,23 @@ export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.
     setPendingImage(null)
   }, [docId])
 
-  // Abrir/cerrar la barra. Al CERRAR, se desactiva la edición (vuelve a
-  // "select" y se deselecciona) para que no se pueda seguir anotando; las
-  // anotaciones ya dibujadas se conservan (visibles pero inertes).
-  const setToolbarOpen = useCallback((open: boolean) => {
-    setToolbarOpenState(open)
-    if (!open) {
+  // Abrir/cerrar la barra pasa por el coordinador del store (que pregunta si hay
+  // cambios sin grabar antes de cambiar de modo).
+  const setToolbarOpen = useCallback(
+    (open: boolean) => {
+      void requestEditMode(open ? 'annotate' : null)
+    },
+    [requestEditMode]
+  )
+
+  // Al salir del modo "annotate" se restablece la herramienta y la selección.
+  useEffect(() => {
+    if (editMode !== 'annotate') {
       setToolState('select')
       setSelectedId(null)
       setPendingImage(null)
     }
-  }, [])
+  }, [editMode])
 
   const setTool = useCallback((next: AnnotationTool) => {
     setToolState(next)
@@ -184,6 +192,7 @@ export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.
       applyDocUpdate(updated)
       setAnnotations([])
       setSelectedId(null)
+      exitEditMode()
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al grabar anotaciones')
@@ -191,13 +200,13 @@ export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.
     } finally {
       setBusy(false)
     }
-  }, [docId, annotations, applyDocUpdate, reportError])
+  }, [docId, annotations, applyDocUpdate, reportError, exitEditMode])
 
-  // Informa al store si hay anotaciones SIN grabar y cómo grabarlas (apply), para
-  // que Guardar/Cerrar las incrusten y el documento se marque como modificado.
+  // Registra en el coordinador si hay anotaciones SIN grabar y cómo grabarlas
+  // (apply) o descartarlas (clear), para avisar al cambiar de modo/cerrar/guardar.
   useEffect(() => {
-    registerPending(annotations.length > 0, apply)
-  }, [annotations, apply, registerPending])
+    registerEditor('annotate', { hasPending: annotations.length > 0, apply, discard: clear })
+  }, [annotations, apply, clear, registerEditor])
 
   // Borrar la anotación seleccionada con Supr/Backspace (salvo escribiendo texto).
   useEffect(() => {

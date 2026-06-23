@@ -356,6 +356,11 @@ body[data-platform='darwin'] .menu-bar {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 14px;
+  /* Las rutas largas no deben desbordar el contenedor: partimos cualquier
+     cadena que no quepa (heredado por el texto plano y por <code>). */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .modal-success code {
@@ -367,6 +372,39 @@ body[data-platform='darwin'] .menu-bar {
 
 .modal-success button {
   align-self: flex-start;
+}
+
+/* ---- Info dialog ---- */
+.info-loading {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 4px 0 14px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 38%) minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  max-height: 56vh;
+  overflow-y: auto;
+}
+
+.info-grid dt {
+  color: var(--text-dim);
+}
+
+.info-grid dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.info-grid dd.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /* ---- Optimize dialog ---- */
@@ -1415,6 +1453,9 @@ body[data-platform='darwin'] .menu-bar {
 /* ---- Content / Viewer ---- */
 .content {
   flex: 1;
+  /* Sin esto, flex:1 dimensiona según el contenido y el `min-width:100%` del
+     visor resuelve mal → la página quedaba pegada a la izquierda con scroll. */
+  min-width: 0;
   overflow: auto;
   background: var(--bg);
 }
@@ -1428,6 +1469,8 @@ body[data-platform='darwin'] .menu-bar {
   /* Permite scroll horizontal cuando una página (con zoom) es más ancha que el área. */
   width: max-content;
   min-width: 100%;
+  /* Centra el bloque cuando la página cabe holgada en el área visible. */
+  margin: 0 auto;
   box-sizing: border-box;
 }
 
@@ -1496,6 +1539,14 @@ body[data-platform='darwin'] .menu-bar {
 
 .empty-icon {
   font-size: 56px;
+}
+
+.empty-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  user-select: none;
 }
 
 .empty-state h2 {
