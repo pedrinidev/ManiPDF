@@ -28,7 +28,9 @@ jobs:
           cache: npm
 
       - name: Instalar dependencias
-        run: npm ci
+        # `npm install` (no `npm ci`): tolera pequeñas diferencias del lock entre
+        # versiones de npm/Node y resuelve lo que falte. Suficiente para compilar.
+        run: npm install
 
       # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
       - name: Generar instaladores
