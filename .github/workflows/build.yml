@@ -1,0 +1,63 @@
+# Compila los instaladores de ManiPDF en cada sistema operativo NATIVO y publica
+# una GitHub Release con ellos al subir una etiqueta de versión (p. ej. v0.1.0).
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+name: Build installers
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # Un job por sistema operativo (en paralelo). Cada uno genera SUS instaladores.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
+      - name: Generar instaladores
+        run: npm run dist
+
+      - name: Subir instaladores como artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: |
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.exe
+
+  # Reúne los artefactos de los 3 SO y crea/actualiza la Release de la etiqueta.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # necesario para crear la Release
+    steps:
+      - name: Descargar todos los artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publicar Release con los instaladores
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
