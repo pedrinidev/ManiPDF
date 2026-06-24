@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import type { DocumentId } from '@shared/ipc-contract'
 
@@ -21,7 +21,7 @@ import type { DocumentId } from '@shared/ipc-contract'
 export class PrintService {
   constructor(private readonly documents: DocumentService) {}
 
-  async print(id: DocumentId): Promise<{ printed: boolean }> {
+  async print(id: DocumentId, parent: BrowserWindow | null): Promise<{ printed: boolean }> {
     const doc = this.documents.getDocument(id)
 
     const dir = await mkdtemp(join(tmpdir(), 'pdfprint-'))
@@ -33,6 +33,11 @@ export class PrintService {
       height: 720,
       title: `Imprimir — ${doc.fileName}`,
       backgroundColor: '#ffffff',
+      // Ventana HIJA de la principal: queda SIEMPRE delante (no se va detrás de
+      // ManiPDF), pero conserva su barra de título y botón de cerrar. No la hacemos
+      // `modal` porque en macOS eso la convierte en una "hoja" SIN botón de cerrar
+      // y dejaría al usuario sin forma de cancelar la previsualización.
+      parent: parent ?? undefined,
       webPreferences: {
         plugins: true, // habilita el visor PDF integrado de Chromium
         sandbox: true,
@@ -46,6 +51,28 @@ export class PrintService {
       void rm(dir, { recursive: true, force: true }).catch(() => {})
     })
     printer.once('ready-to-show', () => printer.show())
+    // Cerrar la previsualización con Esc (además del botón de cerrar de la ventana).
+    printer.webContents.on('before-input-event', (_e, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape' && !printer.isDestroyed()) {
+        printer.close()
+      }
+    })
+
+    // Si el usuario vuelve a ManiPDF con la previsualización abierta: beep del
+    // sistema + traemos la ventana de impresión al frente ("atiende esto primero").
+    if (parent) {
+      let closing = false
+      printer.once('close', () => {
+        closing = true
+      })
+      const onParentFocus = (): void => {
+        if (closing || printer.isDestroyed()) return
+        shell.beep()
+        printer.focus()
+      }
+      parent.on('focus', onParentFocus)
+      printer.once('closed', () => parent.removeListener('focus', onParentFocus))
+    }
 
     try {
       await writeFile(file, doc.bytes)
@@ -54,16 +81,26 @@ export class PrintService {
       await delay(500)
 
       return await new Promise<{ printed: boolean }>((resolve) => {
+        let settled = false
+        const done = (printed: boolean): void => {
+          if (settled) return
+          settled = true
+          resolve({ printed })
+        }
+        // Si el usuario cierra la ventana (botón cerrar / Esc), no dejamos la
+        // promesa colgada: la resolvemos como "no impreso".
+        printer.once('closed', () => done(false))
+
         printer.webContents.print({ silent: false }, (success, reason) => {
           if (!success && reason && reason !== 'cancelled') {
             // No se pudo abrir el diálogo automáticamente (p. ej. sin impresoras
             // configuradas): dejamos la ventana abierta para imprimir a mano o
             // "Guardar como PDF" desde el visor. No lo tratamos como error.
-            resolve({ printed: false })
+            done(false)
             return
           }
           if (!printer.isDestroyed()) printer.close()
-          resolve({ printed: success })
+          done(success)
         })
       })
     } catch (err) {

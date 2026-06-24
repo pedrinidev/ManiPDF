@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { convertClient } from '../services/convert.client'
 import { ClientError } from '../services/document.client'
@@ -39,7 +40,7 @@ export function ConvertDialog(): JSX.Element {
 
       {open && (
         <Portal>
-          <div className="modal-backdrop" onClick={close}>
+          <div className="modal-backdrop" onMouseDown={bumpModal}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <h3>Crear PDF desde imágenes</h3>
               <p className="conv-hint">Elige una o varias imágenes (PNG/JPG); cada una será una página.</p>

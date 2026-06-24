@@ -1,19 +1,27 @@
-import { Buffer } from 'node:buffer'
 import { PDFDocument } from 'pdf-lib'
 import type { BrowserWindow } from 'electron'
 import { PdfDocument } from '../domain/document.model'
 import { FileService } from './file.service'
-import type {
-  DocumentId,
-  DocumentMetadataDTO,
-  OpenDocumentDTO,
-  PageSizeGroup
-} from '@shared/ipc-contract'
+import { decryptPdf, encryptPdf } from './pdf-crypto'
+import {
+  detectColorLabel,
+  detectEncrypted,
+  detectPdfVersion,
+  groupPageSizes
+} from './pdf-metadata'
+import type { DocumentId, DocumentMetadataDTO, OpenDocumentDTO } from '@shared/ipc-contract'
 
 /** Error de dominio con código tipado; los handlers IPC lo traducen a IpcError. */
 export class DocumentError extends Error {
   constructor(
-    readonly code: 'CANCELLED' | 'NOT_FOUND' | 'INVALID_PDF' | 'IO_ERROR' | 'NO_DOCUMENT',
+    readonly code:
+      | 'CANCELLED'
+      | 'NOT_FOUND'
+      | 'INVALID_PDF'
+      | 'IO_ERROR'
+      | 'NO_DOCUMENT'
+      | 'WRONG_PASSWORD'
+      | 'DECRYPT_UNSUPPORTED',
     message: string
   ) {
     super(message)
@@ -63,7 +71,7 @@ export class DocumentService {
     if (!doc.filePath) return this.saveAs(id, window)
 
     try {
-      await this.files.write(doc.filePath, doc.bytes)
+      await this.files.write(doc.filePath, await this.bytesForDisk(doc))
     } catch {
       throw new DocumentError('IO_ERROR', 'No se pudo escribir el archivo en disco')
     }
@@ -78,12 +86,21 @@ export class DocumentService {
     if (!target) throw new DocumentError('CANCELLED', 'Guardado cancelado por el usuario')
 
     try {
-      await this.files.write(target, doc.bytes)
+      await this.files.write(target, await this.bytesForDisk(doc))
     } catch {
       throw new DocumentError('IO_ERROR', 'No se pudo escribir el archivo en disco')
     }
     doc.markSaved(target)
     return { filePath: target }
+  }
+
+  /**
+   * Bytes a escribir en disco: si el documento se abrió protegido, se vuelve a
+   * cifrar con su contraseña para que el archivo siga protegido; si no, tal cual.
+   */
+  private async bytesForDisk(doc: PdfDocument): Promise<Uint8Array> {
+    if (!doc.encryptionPassword) return doc.bytes
+    return encryptPdf(doc.bytes, doc.encryptionPassword)
   }
 
   /**
@@ -108,9 +125,9 @@ export class DocumentService {
    * Restaura los bytes del documento a un estado anterior (deshacer/rehacer).
    * El renderer mantiene los snapshots; aquí solo se reemplazan los bytes.
    */
-  async restore(id: DocumentId, dataBase64: string): Promise<OpenDocumentDTO> {
+  async restore(id: DocumentId, data: Uint8Array): Promise<OpenDocumentDTO> {
     const doc = this.require(id)
-    doc.replaceBytes(Buffer.from(dataBase64, 'base64'))
+    doc.replaceBytes(data)
     return this.describe(id)
   }
 
@@ -134,6 +151,28 @@ export class DocumentService {
       colorSpace: detectColorLabel(doc.bytes),
       pageSizes: groupPageSizes(pdf.getPages().map((p) => p.getSize()))
     }
+  }
+
+  /**
+   * Descifra en memoria un PDF protegido con la contraseña dada, para poder
+   * verlo y editarlo. El archivo en disco no se toca; al guardar se vuelve a
+   * cifrar con la misma contraseña.
+   */
+  async unlock(id: DocumentId, password: string): Promise<OpenDocumentDTO> {
+    const doc = this.require(id)
+    const result = await decryptPdf(doc.bytes, password)
+    if (result.ok === 'unsupported') {
+      throw new DocumentError(
+        'DECRYPT_UNSUPPORTED',
+        'No se pudo descifrar: falta Ghostscript para abrir PDFs protegidos.'
+      )
+    }
+    if (result.ok === 'wrong-password') {
+      throw new DocumentError('WRONG_PASSWORD', 'Contraseña incorrecta')
+    }
+    const pageCount = await this.validateAndCountPages(result.bytes)
+    doc.setDecryptedBytes(result.bytes, password)
+    return this.toOpenDTO(doc, pageCount)
   }
 
   /** Cierra un documento y lo retira del registro. */
@@ -188,77 +227,9 @@ export class DocumentService {
       filePath: doc.filePath,
       fileName: doc.fileName,
       pageCount,
-      dataBase64: Buffer.from(doc.bytes).toString('base64'),
+      data: doc.bytes,
       isDirty: doc.isDirty
     }
   }
 }
 
-/** Lee la versión del encabezado "%PDF-1.x" en los primeros bytes. */
-function detectPdfVersion(bytes: Uint8Array): string | null {
-  const head = Buffer.from(bytes.subarray(0, 16)).toString('latin1')
-  const m = head.match(/%PDF-(\d+\.\d+)/)
-  return m ? m[1] : null
-}
-
-/** Heurística: el documento está cifrado si su trailer referencia /Encrypt. */
-function detectEncrypted(bytes: Uint8Array): boolean {
-  return Buffer.from(bytes).toString('latin1').includes('/Encrypt')
-}
-
-/**
- * Etiqueta heurística del espacio de color, contando los operadores de color del
- * contenido. Es aproximado (no abre cada flujo), suficiente para informar.
- */
-function detectColorLabel(bytes: Uint8Array): string {
-  const text = Buffer.from(bytes).toString('latin1')
-  const cmyk = (text.match(/DeviceCMYK/g) || []).length + (text.match(/\/N\s+4\b/g) || []).length
-  const rgb =
-    (text.match(/DeviceRGB|CalRGB/g) || []).length + (text.match(/\/N\s+3\b/g) || []).length
-  const gray = (text.match(/DeviceGray|CalGray/g) || []).length + (text.match(/\/N\s+1\b/g) || []).length
-  if (cmyk > 0 && rgb > 0) return 'Color (RGB + CMYK)'
-  if (cmyk > 0) return 'Color (CMYK)'
-  if (rgb > 0) return 'Color (RGB)'
-  if (gray > 0) return 'Escala de grises'
-  return 'No determinado'
-}
-
-/** Nombres de tamaños de papel conocidos, en puntos PDF (orientación vertical). */
-const KNOWN_SIZES: { name: string; w: number; h: number }[] = [
-  { name: 'Carta', w: 612, h: 792 },
-  { name: 'Legal', w: 612, h: 1008 },
-  { name: 'Tabloide', w: 792, h: 1224 },
-  { name: 'A3', w: 841.89, h: 1190.55 },
-  { name: 'A4', w: 595.28, h: 841.89 },
-  { name: 'A5', w: 419.53, h: 595.28 }
-]
-
-/** Agrupa los tamaños de página iguales y los etiqueta (cm + nombre si se reconoce). */
-function groupPageSizes(sizes: { width: number; height: number }[]): PageSizeGroup[] {
-  const groups = new Map<string, PageSizeGroup>()
-  for (const { width, height } of sizes) {
-    const w = Math.round(width * 10) / 10
-    const h = Math.round(height * 10) / 10
-    const key = `${w}x${h}`
-    const existing = groups.get(key)
-    if (existing) {
-      existing.count += 1
-      continue
-    }
-    groups.set(key, { widthPt: w, heightPt: h, count: 1, label: sizeLabel(w, h) })
-  }
-  return [...groups.values()].sort((a, b) => b.count - a.count)
-}
-
-/** "21.6 × 27.9 cm · Carta" (el nombre solo si coincide con un tamaño conocido). */
-function sizeLabel(w: number, h: number): string {
-  const cm = (pt: number): string => (pt / 72 * 2.54).toFixed(1)
-  const tol = 4 // puntos de tolerancia (≈1.4 mm)
-  const match = KNOWN_SIZES.find(
-    (s) =>
-      (Math.abs(w - s.w) < tol && Math.abs(h - s.h) < tol) ||
-      (Math.abs(w - s.h) < tol && Math.abs(h - s.w) < tol)
-  )
-  const base = `${cm(w)} × ${cm(h)} cm`
-  return match ? `${base} · ${match.name}` : base
-}

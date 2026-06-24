@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { formsClient } from '../services/forms.client'
 import { ClientError } from '../services/document.client'
@@ -78,7 +79,7 @@ export function FormsDialog(): JSX.Element {
 
       {open && (
         <Portal>
-        <div className="modal-backdrop" onClick={close}>
+        <div className="modal-backdrop" onMouseDown={bumpModal}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>Campos de formulario</h3>
 

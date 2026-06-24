@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
 import { convertClient } from '../services/convert.client'
@@ -114,7 +115,7 @@ export function ExportDialog(): JSX.Element {
 
       {open && (
         <Portal>
-          <div className="modal-backdrop" onClick={close}>
+          <div className="modal-backdrop" onMouseDown={bumpModal}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <h3>Exportar a otro formato</h3>
 

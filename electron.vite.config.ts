@@ -26,6 +26,19 @@ export default defineConfig({
         '@shared': resolve('src/shared')
       }
     },
-    plugins: [react()]
+    plugins: [react()],
+    build: {
+      rollupOptions: {
+        output: {
+          // Separa las librerías pesadas en chunks propios: aligeran el chunk
+          // principal (parseo más rápido de la app) y se cachean por separado,
+          // ya que cambian mucho menos que el código de la app.
+          manualChunks: {
+            pdfjs: ['pdfjs-dist'],
+            utif: ['utif']
+          }
+        }
+      }
+    }
   }
 })

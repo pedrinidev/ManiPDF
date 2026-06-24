@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
@@ -25,7 +25,7 @@ const VIRTUALIZE_THRESHOLD = 75
  */
 export function Viewer(): JSX.Element {
   const { state } = useDocument()
-  const { pdf, error } = usePdf()
+  const { pdf, error, needsPassword, passwordError, submitPassword } = usePdf()
   const { doc, zoom } = state
 
   // Altura estimada por página (para reservar el espacio de las no renderizadas).
@@ -47,6 +47,7 @@ export function Viewer(): JSX.Element {
   }, [pdf, zoom, virtualize])
 
   if (!doc) return <EmptyState />
+  if (needsPassword) return <PasswordPrompt error={passwordError} onSubmit={submitPassword} />
   if (error) return <div className="viewer-error">⚠️ {error}</div>
   // Si ya hay un PDF (aunque se esté recargando el mismo doc), lo seguimos
   // mostrando para evitar el parpadeo en blanco; solo mostramos "Renderizando…"
@@ -174,6 +175,41 @@ function TextSelectionLayer({
     return () => container.replaceChildren()
   }, [pdf, pageNumber, zoom])
   return <div ref={ref} className="textLayer" />
+}
+
+/** Pantalla para introducir la contraseña de un PDF cifrado. */
+function PasswordPrompt({
+  error,
+  onSubmit
+}: {
+  error: string | null
+  onSubmit: (password: string) => void
+}): JSX.Element {
+  const [password, setPassword] = useState('')
+  const submit = (e: FormEvent): void => {
+    e.preventDefault()
+    if (password) onSubmit(password)
+  }
+  return (
+    <div className="empty-state">
+      <img className="empty-logo" src={logoUrl} alt="ManiPDF" width={72} height={72} />
+      <h2>Documento protegido</h2>
+      <p>Este PDF está cifrado. Introduce la contraseña para abrirlo.</p>
+      <form className="password-form" onSubmit={submit}>
+        <input
+          type="password"
+          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Contraseña"
+        />
+        <button type="submit" className="btn primary" disabled={!password}>
+          Abrir
+        </button>
+      </form>
+      {error && <p className="password-error">{error}</p>}
+    </div>
+  )
 }
 
 function EmptyState(): JSX.Element {

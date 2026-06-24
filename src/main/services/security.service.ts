@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { PDFDocument } from '@cantoo/pdf-lib'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
@@ -38,10 +39,16 @@ export class SecurityService {
       throw new DocumentError('INVALID_PDF', 'El PDF no es válido o está dañado')
     }
 
+    // Si no se indica contraseña de propietario, generamos una ALEATORIA (no la
+    // igualamos a la de apertura). Así quien abre con la contraseña de apertura no
+    // es el "propietario" y los lectores SÍ respetan los permisos. Si la igualáramos,
+    // el lector daría control total y las restricciones no tendrían efecto.
+    const ownerPassword = options.ownerPassword?.trim() || randomBytes(24).toString('base64')
+
     const p = options.permissions
     pdf.encrypt({
       userPassword,
-      ownerPassword: options.ownerPassword?.trim() || userPassword,
+      ownerPassword,
       permissions: {
         printing: p.printing ? 'highResolution' : false,
         modifying: p.modifying,

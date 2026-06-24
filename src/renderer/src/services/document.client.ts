@@ -39,6 +39,11 @@ class DocumentClient {
     return this.unwrap(await window.api.document.metadata(id))
   }
 
+  /** Descifra en memoria un PDF protegido (con la contraseña) para poder editarlo. */
+  async unlock(id: DocumentId, password: string): Promise<OpenDocumentDTO> {
+    return this.unwrap(await window.api.document.unlock(id, password))
+  }
+
   async close(id: DocumentId): Promise<void> {
     this.unwrap(await window.api.document.close(id))
   }
@@ -54,8 +59,8 @@ class DocumentClient {
   }
 
   /** Restaura el documento a un snapshot anterior (deshacer/rehacer). */
-  async restore(id: DocumentId, dataBase64: string): Promise<OpenDocumentDTO> {
-    return this.unwrap(await window.api.document.restore(id, dataBase64))
+  async restore(id: DocumentId, data: Uint8Array): Promise<OpenDocumentDTO> {
+    return this.unwrap(await window.api.document.restore(id, data))
   }
 }
 

@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { Icon } from './Icon'
 import { useDocument } from '../state/document.store'
 import { documentClient } from '../services/document.client'
@@ -48,7 +49,7 @@ export function InfoDialog(): JSX.Element {
 
       {open && (
         <Portal>
-          <div className="modal-backdrop" onClick={() => setOpen(false)}>
+          <div className="modal-backdrop" onMouseDown={bumpModal}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <h3>Información del documento</h3>
 

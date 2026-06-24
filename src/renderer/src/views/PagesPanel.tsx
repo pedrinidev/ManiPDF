@@ -98,7 +98,7 @@ export function PagesPanel(): JSX.Element | null {
             {pdf &&
               Array.from({ length: total }, (_, i) => (
                 <Thumbnail
-                  key={`${doc.dataBase64.length}-${i}`}
+                  key={`${doc.data.length}-${i}`}
                   pdf={pdf}
                   index={i}
                   selected={selected.has(i)}

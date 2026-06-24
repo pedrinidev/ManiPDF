@@ -93,6 +93,8 @@ body {
   color: var(--text-dim);
   min-width: 42px;
   text-align: center;
+  cursor: pointer;
+  user-select: none;
 }
 
 /* ---- Buttons ---- */
@@ -298,6 +300,18 @@ body[data-platform='darwin'] .menu-bar {
   font-size: 16px;
 }
 
+/* "Temblor" al pulsar fuera del modal (llama la atención sin cerrarlo). */
+.modal.shake {
+  animation: modal-shake 0.3s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+@keyframes modal-shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-7px); }
+  40%, 60% { transform: translateX(7px); }
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -314,6 +328,49 @@ body[data-platform='darwin'] .menu-bar {
   padding: 7px 9px;
   color: var(--text);
   font-size: 13px;
+}
+
+.password-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 36px 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  color: var(--text);
+}
+
+.password-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.password-hint.warn {
+  color: #e0a000;
 }
 
 .permissions {
@@ -372,6 +429,57 @@ body[data-platform='darwin'] .menu-bar {
 
 .modal-success button {
   align-self: flex-start;
+}
+
+/* ---- About dialog ---- */
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.about-logo {
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.about-title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.about-version {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.about-desc {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0 0 14px;
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.about-grid span {
+  color: var(--text-dim);
+}
+
+.about-grid a {
+  color: var(--accent, #2962ff);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.about-grid a:hover {
+  text-decoration: underline;
 }
 
 /* ---- Info dialog ---- */
@@ -860,12 +968,14 @@ body[data-platform='darwin'] .menu-bar {
 .anno-note {
   position: absolute;
   min-width: 28px;
-  max-width: 220px;
-  padding: 4px 6px;
+  /* Tamaño y ancho relativos a la página (cq*) para que coincida con el PDF
+     grabado a cualquier zoom (WYSIWYG). */
+  max-width: 36cqw;
+  padding: 0.6cqh 0.9cqh;
   border-radius: 4px;
   border: 1px solid rgba(0, 0, 0, 0.25);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  font-size: 12px;
+  font-size: 1.5cqh;
   color: #222;
   cursor: pointer;
 }
@@ -1057,6 +1167,7 @@ body[data-platform='darwin'] .menu-bar {
 
 .redact-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
 }
 
@@ -1464,7 +1575,8 @@ body[data-platform='darwin'] .menu-bar {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  /* Hueco amplio entre páginas: deja sitio al número de página (que va a -20px). */
+  gap: 34px;
   padding: 24px;
   /* Permite scroll horizontal cuando una página (con zoom) es más ancha que el área. */
   width: max-content;
@@ -1549,6 +1661,28 @@ body[data-platform='darwin'] .menu-bar {
   user-select: none;
 }
 
+.password-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.password-form input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  width: 220px;
+}
+
+.password-error {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 .empty-state h2 {
   margin: 8px 0 0;
   color: var(--text);
@@ -1602,9 +1736,35 @@ body[data-platform='darwin'] .menu-bar {
 }
 
 .error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: rgba(255, 92, 92, 0.12);
   color: var(--danger);
   padding: 8px 16px;
   font-size: 13px;
   border-bottom: 1px solid rgba(255, 92, 92, 0.3);
+}
+
+.error-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.error-banner-close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.error-banner-close:hover {
+  background: rgba(255, 92, 92, 0.2);
 }

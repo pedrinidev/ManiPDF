@@ -15,10 +15,10 @@ import type { DocumentId, OpenDocumentDTO } from '@shared/ipc-contract'
 import { documentClient, ClientError } from '../services/document.client'
 import { addRecent } from '../services/recents'
 
-/** Pila de deshacer/rehacer por documento: snapshots (dataBase64) del PDF. */
+/** Pila de deshacer/rehacer por documento: snapshots (bytes) del PDF. */
 interface DocHistory {
-  undo: string[]
-  redo: string[]
+  undo: Uint8Array[]
+  redo: Uint8Array[]
 }
 
 /** Modos de edición mutuamente excluyentes (solo uno activo a la vez). */
@@ -56,7 +56,7 @@ const HISTORY_MAX_STEPS = 30
 const HISTORY_MAX_BYTES = 120 * 1024 * 1024 // ~120 MB de snapshots por documento
 
 /** Recorta una pila de snapshots a los límites de pasos y memoria (deja ≥1). */
-function trimHistory(stack: string[]): string[] {
+function trimHistory(stack: Uint8Array[]): Uint8Array[] {
   const byCount = stack.length > HISTORY_MAX_STEPS ? stack.slice(-HISTORY_MAX_STEPS) : stack
   let total = byCount.reduce((sum, s) => sum + s.length, 0)
   let start = 0
@@ -87,7 +87,9 @@ type Action =
   | { type: 'LOADING' }
   | { type: 'LOADED'; doc: OpenDocumentDTO }
   | { type: 'DOC_UPDATED'; doc: OpenDocumentDTO }
+  | { type: 'DOC_REPLACED'; doc: OpenDocumentDTO }
   | { type: 'ERROR'; message: string }
+  | { type: 'CLEAR_ERROR' }
   | { type: 'OPEN_CANCELLED' }
   | { type: 'CLOSED'; id: DocumentId }
   | { type: 'SET_ACTIVE'; id: DocumentId }
@@ -117,7 +119,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       // Guarda el estado ANTERIOR en la pila de deshacer y limpia rehacer.
       const prev = state.docs.find((d) => d.id === action.doc.id)
       const h = state.history[action.doc.id] ?? { undo: [], redo: [] }
-      const undo = prev ? trimHistory([...h.undo, prev.dataBase64]) : h.undo
+      const undo = prev ? trimHistory([...h.undo, prev.data]) : h.undo
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.doc.id ? action.doc : d)),
@@ -126,8 +128,19 @@ function reducer(state: InternalState, action: Action): InternalState {
         error: null
       }
     }
+    case 'DOC_REPLACED':
+      // Reemplaza los bytes del doc SIN tocar el historial (p. ej. al descifrar
+      // un PDF protegido: es el mismo documento, no una edición que deshacer).
+      return {
+        ...state,
+        docs: state.docs.map((d) => (d.id === action.doc.id ? action.doc : d)),
+        status: 'ready',
+        error: null
+      }
     case 'ERROR':
       return { ...state, status: 'error', error: action.message }
+    case 'CLEAR_ERROR':
+      return { ...state, error: null, status: state.docs.length > 0 ? 'ready' : 'idle' }
     case 'OPEN_CANCELLED':
       return { ...state, status: state.docs.length > 0 ? 'ready' : 'idle', error: null }
     case 'CLOSED': {
@@ -164,7 +177,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const h = state.history[action.id]
       if (!cur || !h || h.undo.length === 0) return state
       const undo = h.undo.slice(0, -1)
-      const redo = trimHistory([...h.redo, cur.dataBase64])
+      const redo = trimHistory([...h.redo, cur.data])
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.id ? action.doc : d)),
@@ -178,7 +191,7 @@ function reducer(state: InternalState, action: Action): InternalState {
       const h = state.history[action.id]
       if (!cur || !h || h.redo.length === 0) return state
       const redo = h.redo.slice(0, -1)
-      const undo = trimHistory([...h.undo, cur.dataBase64])
+      const undo = trimHistory([...h.undo, cur.data])
       return {
         ...state,
         docs: state.docs.map((d) => (d.id === action.id ? action.doc : d)),
@@ -205,6 +218,8 @@ interface DocumentContextValue {
   state: DocumentState
   openDialog: () => Promise<void>
   openByPath: (filePath: string) => Promise<void>
+  /** Abre el manual de usuario; con firstRun=true ofrece guardarlo al cerrarlo. */
+  openManual: (path: string, firstRun?: boolean) => Promise<void>
   save: () => Promise<void>
   saveAs: () => Promise<void>
   print: () => Promise<void>
@@ -213,8 +228,12 @@ interface DocumentContextValue {
   setZoom: (zoom: number) => void
   /** Reemplaza el documento (por id) tras una edición. */
   applyDocUpdate: (doc: OpenDocumentDTO) => void
+  /** Reemplaza el documento sin registrar en el historial (p. ej. al descifrar). */
+  replaceDoc: (doc: OpenDocumentDTO) => void
   /** Muestra un error en el banner global. */
   reportError: (message: string) => void
+  /** Oculta el banner de error. */
+  clearError: () => void
   /**
    * Coordinador de los modos de edición (Anotar / Crear campos / Censurar).
    * `editMode` es el modo activo (o null). `requestEditMode` cambia de modo y, si
@@ -243,6 +262,10 @@ const DocumentContext = createContext<DocumentContextValue | null>(null)
 
 export function DocumentProvider({ children }: { children: ReactNode }): JSX.Element {
   const [internal, dispatch] = useReducer(reducer, initialState)
+
+  // Id de la pestaña del manual abierto en la primera ejecución: al cerrarla se
+  // ofrece guardarlo (solo esa vez).
+  const firstRunManualRef = useRef<DocumentId | null>(null)
 
   // ---- Coordinador de modo de edición (Anotar / Crear campos / Censurar) -----
   // Solo un modo activo a la vez. Cada modo registra si tiene cambios sin grabar y
@@ -358,6 +381,28 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
     [internal.docs, requestEditMode]
   )
 
+  // Abre el manual de usuario. Si es la primera ejecución, recordamos su id para
+  // ofrecer guardarlo al cerrar la pestaña (solo esa vez). No entra en recientes.
+  const openManual = useCallback(
+    async (path: string, firstRun = false) => {
+      const existing = internal.docs.find((d) => d.filePath === path)
+      if (existing) {
+        dispatch({ type: 'SET_ACTIVE', id: existing.id })
+        if (firstRun) firstRunManualRef.current = existing.id
+        return
+      }
+      dispatch({ type: 'LOADING' })
+      try {
+        const doc = await documentClient.openPath(path)
+        dispatch({ type: 'LOADED', doc })
+        if (firstRun) firstRunManualRef.current = doc.id
+      } catch (err) {
+        handleError(err, dispatch)
+      }
+    },
+    [internal.docs]
+  )
+
   // Informa al main si hay cambios sin guardar (incluye edición en curso).
   const anyDirty = internal.docs.some((d) => d.isDirty) || hasUnsavedEdits
   useEffect(() => {
@@ -409,6 +454,31 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
       if (!target) return
       const targetDoc = internal.docs.find((d) => d.id === target)
       const isActive = target === activeDoc?.id
+
+      // Manual de la primera ejecución: al cerrarlo, ofrecemos guardarlo (esa vez).
+      if (target === firstRunManualRef.current) {
+        firstRunManualRef.current = null
+        const choice = await window.api.app.confirmUnsaved({
+          message: 'Manual de ManiPDF',
+          detail: '¿Quieres guardar una copia del manual en tu equipo?',
+          saveLabel: 'Guardar copia'
+        })
+        if (choice === 'cancel') return
+        if (choice === 'save') {
+          try {
+            await documentClient.exportCopy(target)
+          } catch (err) {
+            if (err instanceof ClientError && err.isCancellation) return
+          }
+        }
+        try {
+          await documentClient.close(target)
+        } finally {
+          dispatch({ type: 'CLOSED', id: target })
+        }
+        return
+      }
+
       // "Sucio" = cambios grabados sin guardar O edición en curso (del activo).
       const dirty = !!targetDoc?.isDirty || (isActive && hasUnsavedEdits)
 
@@ -482,7 +552,9 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
   )
   const setZoom = useCallback((zoom: number) => dispatch({ type: 'SET_ZOOM', zoom }), [])
   const applyDocUpdate = useCallback((doc: OpenDocumentDTO) => dispatch({ type: 'DOC_UPDATED', doc }), [])
+  const replaceDoc = useCallback((doc: OpenDocumentDTO) => dispatch({ type: 'DOC_REPLACED', doc }), [])
   const reportError = useCallback((message: string) => dispatch({ type: 'ERROR', message }), [])
+  const clearError = useCallback(() => dispatch({ type: 'CLEAR_ERROR' }), [])
 
   return (
     <DocumentContext.Provider
@@ -490,6 +562,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         state,
         openDialog,
         openByPath,
+        openManual,
         save,
         saveAs,
         print,
@@ -497,7 +570,9 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         setActive,
         setZoom,
         applyDocUpdate,
+        replaceDoc,
         reportError,
+        clearError,
         editMode,
         requestEditMode,
         exitEditMode,

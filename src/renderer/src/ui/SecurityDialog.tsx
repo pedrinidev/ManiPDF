@@ -1,8 +1,13 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
+import { Icon } from './Icon'
 import { useDocument } from '../state/document.store'
 import { securityClient } from '../services/security.client'
 import { ClientError } from '../services/document.client'
+
+/** Longitud mínima de la contraseña de apertura. */
+const MIN_PASSWORD_LENGTH = 6
 
 /**
  * Botón "Proteger" + modal para cifrar el PDF con contraseña y permisos.
@@ -15,15 +20,21 @@ export function SecurityDialog(): JSX.Element {
   const [open, setOpen] = useState(false)
   const [userPassword, setUserPassword] = useState('')
   const [ownerPassword, setOwnerPassword] = useState('')
+  const [showUser, setShowUser] = useState(false)
+  const [showOwner, setShowOwner] = useState(false)
   const [printing, setPrinting] = useState(true)
   const [copying, setCopying] = useState(true)
   const [modifying, setModifying] = useState(false)
   const [busy, setBusy] = useState(false)
   const [savedPath, setSavedPath] = useState<string | null>(null)
 
+  const tooShort = userPassword.trim().length < MIN_PASSWORD_LENGTH
+
   const reset = (): void => {
     setUserPassword('')
     setOwnerPassword('')
+    setShowUser(false)
+    setShowOwner(false)
     setPrinting(true)
     setCopying(true)
     setModifying(false)
@@ -36,7 +47,7 @@ export function SecurityDialog(): JSX.Element {
   }
 
   const submit = async (): Promise<void> => {
-    if (!state.doc || !userPassword.trim()) return
+    if (!state.doc || tooShort) return
     setBusy(true)
     setSavedPath(null)
     try {
@@ -63,7 +74,7 @@ export function SecurityDialog(): JSX.Element {
 
       {open && (
         <Portal>
-        <div className="modal-backdrop" onClick={close}>
+        <div className="modal-backdrop" onMouseDown={bumpModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Proteger con contraseña</h3>
 
@@ -79,23 +90,48 @@ export function SecurityDialog(): JSX.Element {
               <>
                 <label className="field">
                   <span>Contraseña de apertura *</span>
-                  <input
-                    type="password"
-                    value={userPassword}
-                    autoFocus
-                    onChange={(e) => setUserPassword(e.target.value)}
-                    placeholder="Necesaria para abrir el PDF"
-                  />
+                  <div className="password-input">
+                    <input
+                      type={showUser ? 'text' : 'password'}
+                      value={userPassword}
+                      autoFocus
+                      onChange={(e) => setUserPassword(e.target.value)}
+                      placeholder="Necesaria para abrir el PDF"
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle"
+                      onClick={() => setShowUser((v) => !v)}
+                      title={showUser ? 'Ocultar' : 'Mostrar'}
+                      aria-label={showUser ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    >
+                      <Icon name={showUser ? 'eye-off' : 'eye'} size={16} />
+                    </button>
+                  </div>
+                  <small className={tooShort && userPassword.length > 0 ? 'password-hint warn' : 'password-hint'}>
+                    Mínimo {MIN_PASSWORD_LENGTH} caracteres.
+                  </small>
                 </label>
 
                 <label className="field">
                   <span>Contraseña de propietario (opcional)</span>
-                  <input
-                    type="password"
-                    value={ownerPassword}
-                    onChange={(e) => setOwnerPassword(e.target.value)}
-                    placeholder="Para cambiar permisos (si se deja vacía, = apertura)"
-                  />
+                  <div className="password-input">
+                    <input
+                      type={showOwner ? 'text' : 'password'}
+                      value={ownerPassword}
+                      onChange={(e) => setOwnerPassword(e.target.value)}
+                      placeholder="Para cambiar permisos (si se deja vacía, = apertura)"
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle"
+                      onClick={() => setShowOwner((v) => !v)}
+                      title={showOwner ? 'Ocultar' : 'Mostrar'}
+                      aria-label={showOwner ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    >
+                      <Icon name={showOwner ? 'eye-off' : 'eye'} size={16} />
+                    </button>
+                  </div>
                 </label>
 
                 <fieldset className="permissions">
@@ -124,7 +160,7 @@ export function SecurityDialog(): JSX.Element {
                 <button
                   className="btn primary"
                   onClick={submit}
-                  disabled={busy || !userPassword.trim()}
+                  disabled={busy || tooShort}
                 >
                   {busy ? 'Cifrando…' : 'Proteger y guardar'}
                 </button>

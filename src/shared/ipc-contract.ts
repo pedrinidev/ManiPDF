@@ -14,6 +14,7 @@ export const IpcChannel = {
   DocumentSave: 'document:save',
   DocumentSaveAs: 'document:save-as',
   DocumentMetadata: 'document:metadata',
+  DocumentUnlock: 'document:unlock',
   DocumentClose: 'document:close',
   DocumentPrint: 'document:print',
   DocumentExportCopy: 'document:export-copy',
@@ -89,6 +90,8 @@ export type IpcErrorCode =
   | 'INVALID_PDF' // archivo no es un PDF válido
   | 'IO_ERROR' // fallo de lectura/escritura
   | 'NO_DOCUMENT' // operación sobre documento que no está abierto
+  | 'WRONG_PASSWORD' // contraseña incorrecta al descifrar
+  | 'DECRYPT_UNSUPPORTED' // no se puede descifrar (falta Ghostscript)
   | 'UNKNOWN'
 
 // ---------------------------------------------------------------------------
@@ -141,8 +144,12 @@ export interface OpenDocumentDTO {
   filePath: string | null
   fileName: string
   pageCount: number
-  /** Bytes del PDF en base64 para que pdf.js lo renderice en el renderer. */
-  dataBase64: string
+  /**
+   * Bytes del PDF (binario) para que pdf.js lo renderice en el renderer. Se envía
+   * como Uint8Array (no base64) para evitar el coste de codificar/decodificar y
+   * ~33% de memoria extra en cada edición/deshacer.
+   */
+  data: Uint8Array
   isDirty: boolean
 }
 
@@ -396,6 +403,10 @@ export interface IpcApi {
     request: { id: DocumentId }
     response: IpcResult<DocumentMetadataDTO>
   }
+  [IpcChannel.DocumentUnlock]: {
+    request: { id: DocumentId; password: string }
+    response: IpcResult<OpenDocumentDTO>
+  }
   [IpcChannel.DocumentClose]: {
     request: { id: DocumentId }
     response: IpcResult<{ id: DocumentId }>
@@ -413,7 +424,7 @@ export interface IpcApi {
   }
   // Restaura los bytes del documento a un estado anterior (deshacer/rehacer).
   [IpcChannel.DocumentRestore]: {
-    request: { id: DocumentId; dataBase64: string }
+    request: { id: DocumentId; data: Uint8Array }
     response: IpcResult<OpenDocumentDTO>
   }
 
@@ -582,10 +593,12 @@ export interface AppApi {
     save(id: DocumentId): Promise<IpcResult<{ filePath: string }>>
     saveAs(id: DocumentId): Promise<IpcResult<{ filePath: string }>>
     metadata(id: DocumentId): Promise<IpcResult<DocumentMetadataDTO>>
+    /** Descifra en memoria un PDF protegido para poder editarlo (con la contraseña). */
+    unlock(id: DocumentId, password: string): Promise<IpcResult<OpenDocumentDTO>>
     close(id: DocumentId): Promise<IpcResult<{ id: DocumentId }>>
     print(id: DocumentId): Promise<IpcResult<{ printed: boolean }>>
     exportCopy(id: DocumentId): Promise<IpcResult<{ filePath: string }>>
-    restore(id: DocumentId, dataBase64: string): Promise<IpcResult<OpenDocumentDTO>>
+    restore(id: DocumentId, data: Uint8Array): Promise<IpcResult<OpenDocumentDTO>>
   }
   pages: {
     rotate(
@@ -671,6 +684,12 @@ export interface AppApi {
     setDirty(dirty: boolean): void
     /** Revela un archivo en el explorador del SO (Finder / Explorador). */
     reveal(filePath: string): void
+    /** Reproduce el sonido de alerta del sistema (p. ej. clic fuera de un modal). */
+    beep(): void
+    /** Ruta del manual de usuario empaquetado, o null si no existe. */
+    manualPath(): Promise<string | null>
+    /** true SOLO la primera vez que se abre la app tras instalar (deja una marca). */
+    firstRun(): Promise<boolean>
     /** Diálogo nativo de cambios sin guardar. Devuelve la acción elegida. */
     confirmUnsaved(opts: {
       message: string

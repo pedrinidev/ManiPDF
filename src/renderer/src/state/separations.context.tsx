@@ -53,7 +53,10 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
   const { state, reportError } = useDocument()
   const docId = state.doc?.id ?? null
 
-  const [active, setActive] = useState(false)
+  // El modo "separación" se recuerda POR documento: al volver a una pestaña que lo
+  // tenía abierto, el panel sigue ahí (no hay que reabrirlo desde Herramientas).
+  const [activeDocs, setActiveDocs] = useState<Set<string>>(new Set())
+  const active = docId ? activeDocs.has(docId) : false
   // Resolución fija a la mejor disponible para la previsualización/exportación de planchas.
   const [dpi, setDpiState] = useState(300)
   const [enabled, setEnabled] = useState<Set<string>>(new Set())
@@ -71,18 +74,27 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
     loadingRef.current = new Set()
   }, [])
 
-  // Al cambiar de documento, salimos y limpiamos.
+  // Al cambiar de documento limpiamos la caché de planchas (están cacheadas por
+  // nº de página, no por documento). El flag "activo" NO se toca: es por documento
+  // (activeDocs), así el panel reaparece al volver a su pestaña y se regenera.
   useEffect(() => {
-    setActive(false)
     setEnabled(new Set())
     reset()
   }, [docId, reset])
 
-  const start = useCallback(() => setActive(true), [])
+  const start = useCallback(() => {
+    if (docId) setActiveDocs((prev) => new Set(prev).add(docId))
+  }, [docId])
   const exit = useCallback(() => {
-    setActive(false)
+    if (docId) {
+      setActiveDocs((prev) => {
+        const next = new Set(prev)
+        next.delete(docId)
+        return next
+      })
+    }
     reset()
-  }, [reset])
+  }, [docId, reset])
 
   const setDpi = useCallback(
     (d: number) => {

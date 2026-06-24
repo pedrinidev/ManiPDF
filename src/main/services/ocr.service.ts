@@ -57,7 +57,10 @@ export class OcrService {
 
       for (const page of pages) {
         const buffer = Buffer.from(page.jpegBase64, 'base64')
-        const { data } = await worker.recognize(buffer)
+        // `blocks: true` es imprescindible: en tesseract.js v6+ las cajas de
+        // palabras NO se devuelven por defecto (data.blocks vendría vacío y no se
+        // dibujaría la capa de texto invisible → el PDF no sería buscable).
+        const { data } = await worker.recognize(buffer, {}, { blocks: true })
         const words = extractWords(data)
 
         const jpg = await out.embedJpg(buffer)
@@ -104,9 +107,20 @@ export class OcrService {
     for (const w of words) {
       const text = w.text.trim()
       if (!text) continue
-      const size = Math.max(1, (w.y1 - w.y0) * sy)
+
+      const boxW = (w.x1 - w.x0) * sx
+      const boxH = (w.y1 - w.y0) * sy
+      // Tamaño por altura de caja (la mayúscula ocupa ~0.7 del em → compensamos
+      // para que el glifo case con la altura del texto escaneado).
+      let size = Math.max(1, boxH / 0.72)
+      // Si a ese tamaño el texto fuese MÁS ancho que su caja, lo reducimos para
+      // que no se desborde ni se "corra" respecto a la imagen.
+      const naturalW = font.widthOfTextAtSize(text, size)
+      if (naturalW > boxW && naturalW > 0) size *= boxW / naturalW
+
       const x = w.x0 * sx
-      const y = src.heightPt - w.y1 * sy // baseline aproximada
+      // Baseline: el borde inferior de la caja menos el descendente (~0.21·em).
+      const y = src.heightPt - w.y1 * sy + size * 0.21
       try {
         page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0), opacity: 0 })
       } catch {

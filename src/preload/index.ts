@@ -15,10 +15,11 @@ const api: AppApi = {
     save: (id) => ipcRenderer.invoke(IpcChannel.DocumentSave, { id }),
     saveAs: (id) => ipcRenderer.invoke(IpcChannel.DocumentSaveAs, { id }),
     metadata: (id) => ipcRenderer.invoke(IpcChannel.DocumentMetadata, { id }),
+    unlock: (id, password) => ipcRenderer.invoke(IpcChannel.DocumentUnlock, { id, password }),
     close: (id) => ipcRenderer.invoke(IpcChannel.DocumentClose, { id }),
     print: (id) => ipcRenderer.invoke(IpcChannel.DocumentPrint, { id }),
     exportCopy: (id) => ipcRenderer.invoke(IpcChannel.DocumentExportCopy, { id }),
-    restore: (id, dataBase64) => ipcRenderer.invoke(IpcChannel.DocumentRestore, { id, dataBase64 })
+    restore: (id, data) => ipcRenderer.invoke(IpcChannel.DocumentRestore, { id, data })
   },
   pages: {
     rotate: (id, pageIndices, delta) =>
@@ -88,6 +89,9 @@ const api: AppApi = {
   app: {
     setDirty: (dirty) => ipcRenderer.send('app:set-dirty', dirty),
     reveal: (filePath) => ipcRenderer.send('app:reveal', filePath),
+    beep: () => ipcRenderer.send('app:beep'),
+    manualPath: () => ipcRenderer.invoke('app:manual-path'),
+    firstRun: () => ipcRenderer.invoke('app:consume-first-run'),
     confirmUnsaved: (opts) => ipcRenderer.invoke('app:confirm-unsaved', opts)
   }
 }

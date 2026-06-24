@@ -4,6 +4,7 @@ import { useRedact } from '../state/redact.context'
 import { useFormBuilder } from '../state/formbuilder.context'
 import { useSeparations } from '../state/separations.context'
 import { useAnnotations } from '../state/annotations.context'
+import { usePdf } from '../state/pdf.context'
 import { Menu } from './Menu'
 import { SecurityDialog } from './SecurityDialog'
 import { OptimizeDialog } from './OptimizeDialog'
@@ -15,6 +16,7 @@ import { StampDialog } from './StampDialog'
 import { CombineDialog } from './CombineDialog'
 import { CompareDialog } from './CompareDialog'
 import { SearchBar } from './SearchBar'
+import { AboutDialog } from './AboutDialog'
 import { InfoDialog } from './InfoDialog'
 import { Icon } from './Icon'
 
@@ -26,8 +28,10 @@ export function MenuBar(): JSX.Element {
   const { start: startFields } = useFormBuilder()
   const { start: startSeparations } = useSeparations()
   const { setToolbarOpen } = useAnnotations()
+  const { printingAllowed } = usePdf()
   const { doc, zoom } = state
   const hasDoc = !!doc
+  const canPrint = hasDoc && printingAllowed
   const modKey = window.api.system.platform === 'darwin' ? '⌘' : 'Ctrl+'
 
   // Atajos de teclado principales (estilo escritorio).
@@ -50,7 +54,7 @@ export function MenuBar(): JSX.Element {
           e.shiftKey ? saveAs() : save()
           break
         case 'p': // Imprimir
-          if (!hasDoc) return
+          if (!canPrint) return
           e.preventDefault()
           print()
           break
@@ -73,7 +77,7 @@ export function MenuBar(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [hasDoc, openDialog, save, saveAs, print, closeDoc, undo, redo])
+  }, [hasDoc, canPrint, openDialog, save, saveAs, print, closeDoc, undo, redo])
 
   return (
     <header className="menu-bar">
@@ -92,7 +96,12 @@ export function MenuBar(): JSX.Element {
             <kbd>{modKey}⇧S</kbd>
           </button>
           <div className="menu-sep" />
-          <button className="btn menu-item" onClick={print} disabled={!hasDoc}>
+          <button
+            className="btn menu-item"
+            onClick={print}
+            disabled={!canPrint}
+            title={hasDoc && !printingAllowed ? 'El documento no permite imprimir' : undefined}
+          >
             <span>Imprimir…</span>
             <kbd>{modKey}P</kbd>
           </button>
@@ -152,6 +161,7 @@ export function MenuBar(): JSX.Element {
           </button>
         </Menu>
 
+        <AboutDialog />
         <InfoDialog />
       </div>
 
@@ -176,8 +186,8 @@ export function MenuBar(): JSX.Element {
         <button
           className="btn icon"
           onClick={print}
-          disabled={!hasDoc}
-          title="Imprimir (Cmd/Ctrl+P)"
+          disabled={!canPrint}
+          title={hasDoc && !printingAllowed ? 'El documento no permite imprimir' : 'Imprimir (Cmd/Ctrl+P)'}
           aria-label="Imprimir"
         >
           <Icon name="printer" size={16} />
@@ -188,7 +198,13 @@ export function MenuBar(): JSX.Element {
         <button className="btn icon" onClick={() => setZoom(zoom - 0.25)} disabled={!hasDoc} aria-label="Alejar">
           <Icon name="minus" size={16} />
         </button>
-        <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+        <span
+          className="zoom-value"
+          onDoubleClick={() => setZoom(1)}
+          title="Doble clic para volver al 100%"
+        >
+          {Math.round(zoom * 100)}%
+        </span>
         <button className="btn icon" onClick={() => setZoom(zoom + 0.25)} disabled={!hasDoc} aria-label="Acercar">
           <Icon name="plus" size={16} />
         </button>

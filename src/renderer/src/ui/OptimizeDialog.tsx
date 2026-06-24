@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
 import { optimizeClient } from '../services/optimize.client'
@@ -35,7 +36,7 @@ export function OptimizeDialog(): JSX.Element {
 
   const run = async (): Promise<void> => {
     if (!state.doc) return
-    const before = bytesFromBase64(state.doc.dataBase64)
+    const before = state.doc.data.byteLength
     setBusy(true)
     setResult(null)
     try {
@@ -44,7 +45,7 @@ export function OptimizeDialog(): JSX.Element {
           ? await optimizeClient.lossless(state.doc.id)
           : await optimizeClient.rebuildFromImages(state.doc.id, await rasterizeAll())
       applyDocUpdate(updated)
-      setResult({ before, after: bytesFromBase64(updated.dataBase64) })
+      setResult({ before, after: updated.data.byteLength })
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al comprimir')
@@ -72,7 +73,7 @@ export function OptimizeDialog(): JSX.Element {
 
       {open && (
         <Portal>
-        <div className="modal-backdrop" onClick={close}>
+        <div className="modal-backdrop" onMouseDown={bumpModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Comprimir PDF</h3>
 
@@ -151,11 +152,6 @@ export function OptimizeDialog(): JSX.Element {
       )}
     </>
   )
-}
-
-function bytesFromBase64(b64: string): number {
-  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0
-  return Math.floor((b64.length * 3) / 4) - padding
 }
 
 function formatSize(bytes: number): string {

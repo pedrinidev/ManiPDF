@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { combineClient } from '../services/combine.client'
 import { ClientError } from '../services/document.client'
@@ -60,7 +61,7 @@ export function CombineDialog(): JSX.Element {
 
       {open && (
         <Portal>
-        <div className="modal-backdrop" onClick={close}>
+        <div className="modal-backdrop" onMouseDown={bumpModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Unir o dividir PDF</h3>
 

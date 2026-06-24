@@ -40,11 +40,46 @@ function DragDropHandler(): null {
   return null
 }
 
-/** Banner de error global, no intrusivo. */
+/** Al estrenar la app (primera ejecución tras instalar), abre el manual de usuario. */
+function FirstRunManual(): null {
+  const { openManual } = useDocument()
+  useEffect(() => {
+    let done = false
+    void (async () => {
+      if (done) return
+      const isFirstRun = await window.api.app.firstRun()
+      if (!isFirstRun || done) return
+      const path = await window.api.app.manualPath()
+      if (path && !done) await openManual(path, true)
+    })()
+    return () => {
+      done = true
+    }
+  }, [openManual])
+  return null
+}
+
+/** Banner de error global, no intrusivo. Se cierra con la X o solo a los 5 s. */
 function ErrorBanner(): JSX.Element | null {
-  const { state } = useDocument()
-  if (state.status !== 'error' || !state.error) return null
-  return <div className="error-banner">⚠️ {state.error}</div>
+  const { state, clearError } = useDocument()
+  const showing = state.status === 'error' && !!state.error
+
+  // Auto-cierre tras 5 segundos (se reinicia con cada error nuevo).
+  useEffect(() => {
+    if (!showing) return
+    const t = setTimeout(clearError, 5000)
+    return () => clearTimeout(t)
+  }, [showing, state.error, clearError])
+
+  if (!showing) return null
+  return (
+    <div className="error-banner">
+      <span className="error-banner-text">⚠️ {state.error}</span>
+      <button className="error-banner-close" onClick={clearError} title="Cerrar" aria-label="Cerrar aviso">
+        ×
+      </button>
+    </div>
+  )
 }
 
 export function App(): JSX.Element {
@@ -59,6 +94,7 @@ export function App(): JSX.Element {
               <PagesProvider>
               <div className="app">
                 <DragDropHandler />
+                <FirstRunManual />
                 <MenuBar />
                 <TabBar />
                 <AnnotationToolbar />

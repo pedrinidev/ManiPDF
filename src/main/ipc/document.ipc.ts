@@ -29,12 +29,16 @@ export function registerDocumentIpc(service: DocumentService): void {
     handle(() => service.exportCopy(args.id, BrowserWindow.fromWebContents(event.sender)))
   )
 
-  ipcMain.handle(IpcChannel.DocumentRestore, (_event, args: { id: string; dataBase64: string }) =>
-    handle(() => service.restore(args.id, args.dataBase64))
+  ipcMain.handle(IpcChannel.DocumentRestore, (_event, args: { id: string; data: Uint8Array }) =>
+    handle(() => service.restore(args.id, args.data))
   )
 
   ipcMain.handle(IpcChannel.DocumentMetadata, (_event, args: { id: string }) =>
     handle(() => service.metadata(args.id))
+  )
+
+  ipcMain.handle(IpcChannel.DocumentUnlock, (_event, args: { id: string; password: string }) =>
+    handle(() => service.unlock(args.id, args.password))
   )
 
   ipcMain.handle(IpcChannel.DocumentClose, (_event, args: { id: string }) =>

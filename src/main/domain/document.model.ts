@@ -17,12 +17,19 @@ export class PdfDocument {
   bytes: Uint8Array
   /** true si hay cambios sin guardar. */
   isDirty: boolean
+  /**
+   * Si el documento se abrió cifrado, la contraseña con la que se descifró en
+   * memoria. Se usa para volver a cifrarlo al guardar (que el archivo siga
+   * protegido). null = documento no cifrado.
+   */
+  encryptionPassword: string | null
 
   private constructor(id: DocumentId, filePath: string | null, bytes: Uint8Array) {
     this.id = id
     this.filePath = filePath
     this.bytes = bytes
     this.isDirty = false
+    this.encryptionPassword = null
   }
 
   /** Crea un documento a partir de bytes leídos de disco. */
@@ -39,6 +46,16 @@ export class PdfDocument {
   replaceBytes(bytes: Uint8Array): void {
     this.bytes = bytes
     this.isDirty = true
+  }
+
+  /**
+   * Sustituye los bytes por la versión DESCIFRADA (al abrir un PDF protegido) sin
+   * marcarlo como modificado: es el mismo documento, solo descifrado en memoria.
+   */
+  setDecryptedBytes(bytes: Uint8Array, password: string): void {
+    this.bytes = bytes
+    this.encryptionPassword = password
+    this.isDirty = false
   }
 
   /** Marca el documento como guardado en la ruta indicada. */

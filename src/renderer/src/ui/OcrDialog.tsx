@@ -1,5 +1,6 @@
 import { useState, type JSX } from 'react'
 import { Portal } from './Portal'
+import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
 import { ocrClient } from '../services/ocr.client'
@@ -93,7 +94,7 @@ export function OcrDialog(): JSX.Element {
 
       {open && (
         <Portal>
-        <div className="modal-backdrop" onClick={close}>
+        <div className="modal-backdrop" onMouseDown={bumpModal}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
             <h3>OCR — Reconocer texto</h3>
 

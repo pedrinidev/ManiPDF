@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
 import { FileService } from './services/file.service'
 import { DocumentService } from './services/document.service'
@@ -41,6 +41,34 @@ let documentDirty = false
 function registerModules(): void {
   ipcMain.on('app:set-dirty', (_e, dirty: boolean) => {
     documentDirty = dirty
+  })
+
+  // Sonido del sistema (p. ej. al pulsar fuera de un diálogo modal).
+  ipcMain.on('app:beep', () => {
+    shell.beep()
+  })
+
+  // Ruta del manual de usuario empaquetado (build/manual.pdf en dev, resources en
+  // producción). Devuelve null si no existe.
+  ipcMain.handle('app:manual-path', () => {
+    const candidates = [
+      join(process.resourcesPath ?? '', 'manual.pdf'),
+      join(__dirname, '../../build/manual.pdf')
+    ]
+    return candidates.find((p) => p && existsSync(p)) ?? null
+  })
+
+  // Primera ejecución tras instalar: devuelve true SOLO la primera vez (luego deja
+  // una marca en userData). Sirve para mostrar el manual al estrenar la app.
+  ipcMain.handle('app:consume-first-run', () => {
+    const marker = join(app.getPath('userData'), '.manipdf-first-run-done')
+    if (existsSync(marker)) return false
+    try {
+      writeFileSync(marker, new Date().toISOString())
+    } catch {
+      return false // si no podemos marcar, no insistimos en cada arranque
+    }
+    return true
   })
 
   // Revela un archivo en el explorador del SO. Se valida que exista para no
@@ -170,11 +198,46 @@ app.whenReady().then(() => {
 
   registerModules()
   createWindow()
+  maybeRemindUpdate()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+/** Días de uso recomendados antes de sugerir actualizar/reinstalar. */
+const USAGE_LIMIT_DAYS = 365
+
+/** Fecha de la primera apertura (reutiliza la marca de primera ejecución). */
+function firstOpenDate(): Date | null {
+  const marker = join(app.getPath('userData'), '.manipdf-first-run-done')
+  if (!existsSync(marker)) return null
+  try {
+    const d = new Date(readFileSync(marker, 'utf8').trim())
+    return Number.isNaN(d.getTime()) ? null : d
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Si la app lleva instalada más de un año, muestra un recordatorio (no bloquea el
+ * uso) para actualizar o reinstalar. Es un aviso del lado cliente.
+ */
+function maybeRemindUpdate(): void {
+  const installed = firstOpenDate()
+  if (!installed) return
+  const days = (Date.now() - installed.getTime()) / 86_400_000
+  if (days < USAGE_LIMIT_DAYS) return
+  void dialog.showMessageBox({
+    type: 'info',
+    title: 'ManiPDF',
+    message: 'Llevas más de un año usando ManiPDF',
+    detail:
+      'Te recomendamos actualizar o reinstalar la aplicación para obtener mejoras y correcciones.',
+    buttons: ['Entendido']
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

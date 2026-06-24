@@ -11,11 +11,23 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
  * los componentes piden "renderiza esta página en este canvas", sin tocar pdf.js.
  */
 
-/** Decodifica el PDF (en base64) a un documento pdf.js listo para renderizar. */
-export async function loadPdf(dataBase64: string): Promise<PDFDocumentProxy> {
-  const bytes = base64ToBytes(dataBase64)
-  // copia: pdf.js puede transferir/neutralizar el buffer que recibe.
-  return pdfjs.getDocument({ data: bytes }).promise
+/**
+ * Carga un documento pdf.js a partir de los bytes del PDF. Acepta `Uint8Array`
+ * (flujo del documento, sin base64) o una cadena base64 (p. ej. el PDF a comparar).
+ */
+export async function loadPdf(data: Uint8Array | string, password?: string): Promise<PDFDocumentProxy> {
+  const bytes = typeof data === 'string' ? base64ToBytes(data) : data
+  // Copia: pdf.js puede transferir/neutralizar el buffer que recibe, y estos bytes
+  // se comparten con el store/historial; no debemos dejar que los neutralice.
+  return pdfjs.getDocument({ data: bytes.slice(), password }).promise
+}
+
+/** ¿El error de pdf.js es por falta o incorrección de contraseña? */
+export function isPasswordError(err: unknown): 'need' | 'wrong' | null {
+  const name = (err as { name?: string } | null)?.name
+  if (name !== 'PasswordException') return null
+  // code 1 = NEED_PASSWORD, code 2 = INCORRECT_PASSWORD (pdf.js).
+  return (err as { code?: number }).code === 2 ? 'wrong' : 'need'
 }
 
 /** Renderiza una página concreta en un canvas al nivel de zoom dado. */

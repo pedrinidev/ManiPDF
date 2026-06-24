@@ -11,10 +11,12 @@ import type {
   RectArea
 } from '@shared/ipc-contract'
 
-const NOTE_FONT_SIZE = 10
-const NOTE_PADDING = 4
-const NOTE_LINE_GAP = 2
-const NOTE_BOX_WIDTH = 200 // ancho fijo de la nota (pt), tipo nota adhesiva
+// Notas: tamaños relativos a la página para que el PDF grabado coincida con la
+// nota del overlay (que usa unidades cq* a 1.5cqh / 36cqw / padding 0.6cqh).
+const NOTE_SIZE_FRAC = 0.015 // fuente como fracción de la ALTURA de página
+const NOTE_PADDING_FRAC = 0.006 // padding como fracción de la ALTURA de página
+const NOTE_MAX_WIDTH_FRAC = 0.36 // ancho máx. como fracción del ANCHO de página
+const NOTE_LINE_GAP_FRAC = 0.2 // separación entre líneas, fracción del tamaño
 const TEXT_MAX_WIDTH_FRAC = 0.6 // coincide con el max-width 60% del overlay
 
 /**
@@ -163,12 +165,21 @@ export class AnnotationsService {
     H: number,
     font: PDFFont
   ): void {
-    // Ancho FIJO con ajuste de línea (como la nota adhesiva de pantalla); así no
-    // se convierte en una tira que se sale de la hoja.
-    const innerW = NOTE_BOX_WIDTH - NOTE_PADDING * 2
-    const lines = wrapLines(text || '(nota)', font, NOTE_FONT_SIZE, innerW)
-    const boxW = NOTE_BOX_WIDTH
-    const boxH = lines.length * (NOTE_FONT_SIZE + NOTE_LINE_GAP) + NOTE_PADDING * 2
+    // Tamaños proporcionales a la página (igual que el overlay) y caja AJUSTADA
+    // AL CONTENIDO (no fija), como la nota adhesiva de pantalla.
+    const fontSize = NOTE_SIZE_FRAC * H
+    const padding = NOTE_PADDING_FRAC * H
+    const lineGap = fontSize * NOTE_LINE_GAP_FRAC
+    const maxInnerW = NOTE_MAX_WIDTH_FRAC * W - padding * 2
+
+    const lines = wrapLines(text || '(nota)', font, fontSize, maxInnerW)
+    const contentW = Math.max(
+      fontSize,
+      ...lines.map((l) => font.widthOfTextAtSize(l, fontSize))
+    )
+    const innerW = Math.min(contentW, maxInnerW)
+    const boxW = innerW + padding * 2
+    const boxH = lines.length * (fontSize + lineGap) + padding * 2
 
     // Si no cabe a la derecha, se desplaza para no salirse de la página.
     let left = pos.x * W
@@ -182,18 +193,17 @@ export class AnnotationsService {
       width: boxW,
       height: boxH,
       color,
-      opacity: 0.85,
       borderColor: rgb(0.6, 0.5, 0),
       borderWidth: 0.5
     })
 
     lines.forEach((line, i) => {
       page.drawText(line, {
-        x: left + NOTE_PADDING,
-        y: top - NOTE_PADDING - NOTE_FONT_SIZE - i * (NOTE_FONT_SIZE + NOTE_LINE_GAP),
-        size: NOTE_FONT_SIZE,
+        x: left + padding,
+        y: top - padding - fontSize - i * (fontSize + lineGap),
+        size: fontSize,
         font,
-        color: rgb(0.1, 0.1, 0.1)
+        color: rgb(0.13, 0.13, 0.13)
       })
     })
   }
