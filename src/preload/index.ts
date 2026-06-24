@@ -92,6 +92,12 @@ const api: AppApi = {
     beep: () => ipcRenderer.send('app:beep'),
     manualPath: () => ipcRenderer.invoke('app:manual-path'),
     firstRun: () => ipcRenderer.invoke('app:consume-first-run'),
+    takePendingOpen: () => ipcRenderer.invoke('app:take-pending-open'),
+    onOpenPath: (cb) => {
+      const handler = (_e: unknown, path: string): void => cb(path)
+      ipcRenderer.on('app:open-path', handler)
+      return () => ipcRenderer.removeListener('app:open-path', handler)
+    },
     confirmUnsaved: (opts) => ipcRenderer.invoke('app:confirm-unsaved', opts)
   }
 }

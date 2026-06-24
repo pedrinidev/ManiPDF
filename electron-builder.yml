@@ -16,6 +16,14 @@ asarUnpack:
 extraResources:
   - from: build/manual.pdf
     to: manual.pdf
+# Asocia los .pdf con ManiPDF: aparecerá en "Abrir con…" del sistema (no se pone
+# como predeterminado; eso lo decide el usuario). Solo aplica a la app empaquetada.
+fileAssociations:
+  - ext: pdf
+    name: PDF
+    description: Documento PDF
+    role: Editor
+    mimeType: application/pdf
 mac:
   target:
     - dmg

@@ -40,6 +40,19 @@ function DragDropHandler(): null {
   return null
 }
 
+/** Abre los PDF que el SO pide abrir (doble clic en el Finder/Explorador, "Abrir con"). */
+function OpenWithHandler(): null {
+  const { openByPath } = useDocument()
+  useEffect(() => {
+    // Aperturas en curso (mientras la app está abierta).
+    const off = window.api.app.onOpenPath((path) => openByPath(path))
+    // Cola inicial: PDFs con los que se lanzó la app (marca al renderer como listo).
+    void window.api.app.takePendingOpen().then((paths) => paths.forEach((p) => openByPath(p)))
+    return off
+  }, [openByPath])
+  return null
+}
+
 /** Al estrenar la app (primera ejecución tras instalar), abre el manual de usuario. */
 function FirstRunManual(): null {
   const { openManual } = useDocument()
@@ -94,6 +107,7 @@ export function App(): JSX.Element {
               <PagesProvider>
               <div className="app">
                 <DragDropHandler />
+                <OpenWithHandler />
                 <FirstRunManual />
                 <MenuBar />
                 <TabBar />

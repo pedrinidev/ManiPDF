@@ -690,6 +690,10 @@ export interface AppApi {
     manualPath(): Promise<string | null>
     /** true SOLO la primera vez que se abre la app tras instalar (deja una marca). */
     firstRun(): Promise<boolean>
+    /** Recoge los PDFs que el SO pidió abrir antes de montar la UI (y marca listo). */
+    takePendingOpen(): Promise<string[]>
+    /** Escucha aperturas de PDF solicitadas por el SO mientras la app corre. Devuelve unsubscribe. */
+    onOpenPath(cb: (path: string) => void): () => void
     /** Diálogo nativo de cambios sin guardar. Devuelve la acción elegida. */
     confirmUnsaved(opts: {
       message: string

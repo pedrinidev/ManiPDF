@@ -34,6 +34,29 @@ import { registerPrintIpc } from './ipc/print.ipc'
 /** Estado de "cambios sin guardar" que reporta el renderer (para el aviso al cerrar). */
 let documentDirty = false
 
+/** Ventana principal (para reenviarle archivos que el SO pide abrir). */
+let mainWindow: BrowserWindow | null = null
+/** PDFs pendientes de abrir (p. ej. recibidos antes de que el renderer esté listo). */
+const pendingOpen: string[] = []
+/** true cuando el renderer ya montó y escucha aperturas. */
+let rendererReady = false
+
+/** Devuelve la ruta de un .pdf existente entre los argumentos, o null. */
+function pdfFromArgv(argv: string[]): string | null {
+  return argv.find((a) => /\.pdf$/i.test(a) && existsSync(a)) ?? null
+}
+
+/** Abre un PDF en el renderer; si aún no está listo, lo deja en cola. */
+function openInRenderer(path: string): void {
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:open-path', path)
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  } else {
+    pendingOpen.push(path)
+  }
+}
+
 /**
  * Composition root: aquí se instancian los services y se cablean los módulos IPC.
  * Es el único sitio que conoce todas las piezas; el resto depende de abstracciones.
@@ -56,6 +79,16 @@ function registerModules(): void {
       join(__dirname, '../../build/manual.pdf')
     ]
     return candidates.find((p) => p && existsSync(p)) ?? null
+  })
+
+  // El renderer avisa de que ya está listo y recoge los PDFs en cola (los que el
+  // SO pidió abrir antes de montar la interfaz). A partir de aquí, las aperturas
+  // se envían por evento.
+  ipcMain.handle('app:take-pending-open', () => {
+    rendererReady = true
+    const paths = [...pendingOpen]
+    pendingOpen.length = 0
+    return paths
   })
 
   // Primera ejecución tras instalar: devuelve true SOLO la primera vez (luego deja
@@ -187,23 +220,48 @@ function createWindow(): BrowserWindow {
   return window
 }
 
-app.whenReady().then(() => {
-  // En desarrollo (macOS) el dock muestra el icono genérico de Electron; forzamos
-  // el de la app para verlo. En producción lo aporta el bundle .app/.icns de
-  // electron-builder (build/ no viaja dentro del asar → existsSync será falso).
-  if (process.platform === 'darwin' && app.dock) {
-    const devIcon = join(__dirname, '../../build/icon.png')
-    if (existsSync(devIcon)) app.dock.setIcon(devIcon)
-  }
-
-  registerModules()
-  createWindow()
-  maybeRemindUpdate()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+// macOS: abrir un PDF desde Finder o el dock (puede llegar ANTES de estar listos).
+app.on('open-file', (event, path) => {
+  event.preventDefault()
+  openInRenderer(path)
 })
+
+// Instancia única: si ya hay una abierta, la segunda pasa su archivo y se cierra.
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_e, argv) => {
+    const p = pdfFromArgv(argv)
+    if (p) openInRenderer(p)
+    else if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  app.whenReady().then(() => {
+    // En desarrollo (macOS) el dock muestra el icono genérico de Electron; forzamos
+    // el de la app para verlo. En producción lo aporta el bundle .app/.icns de
+    // electron-builder (build/ no viaja dentro del asar → existsSync será falso).
+    if (process.platform === 'darwin' && app.dock) {
+      const devIcon = join(__dirname, '../../build/icon.png')
+      if (existsSync(devIcon)) app.dock.setIcon(devIcon)
+    }
+
+    registerModules()
+    mainWindow = createWindow()
+    maybeRemindUpdate()
+
+    // Windows/Linux: el PDF con el que se lanzó la app llega como argumento.
+    const argvPath = pdfFromArgv(process.argv)
+    if (argvPath) openInRenderer(argvPath)
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow()
+    })
+  })
+}
 
 /** Días de uso recomendados antes de sugerir actualizar/reinstalar. */
 const USAGE_LIMIT_DAYS = 365
