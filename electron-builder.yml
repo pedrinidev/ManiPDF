@@ -26,13 +26,24 @@ fileAssociations:
     mimeType: application/pdf
 mac:
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - x64
+        - arm64
   category: public.app-category.productivity
-# Apps sin firmar: macOS pedirá confirmación la 1a vez (clic derecho > Abrir).
+  # Sin certificado de firma: se genera sin firmar (macOS pedirá confirmación la
+  # 1a vez: clic derecho > Abrir).
+  identity: null
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
+        - arm64
 linux:
   target:
-    - AppImage
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
   category: Office
