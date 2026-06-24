@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "build:manual": "node scripts/build-manual.mjs",
     "package": "npm run build:manual && npm run build && electron-builder --dir",
-    "dist": "npm run build:manual && npm run build && electron-builder"
+    "dist": "npm run build:manual && npm run build && electron-builder --publish never"
   },
   "dependencies": {
     "@cantoo/pdf-lib": "^2.7.1",
