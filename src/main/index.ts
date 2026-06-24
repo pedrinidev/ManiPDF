@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { existsSync, writeFileSync, readFileSync } from 'node:fs'
-import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog, Menu, nativeTheme } from 'electron'
 import { FileService } from './services/file.service'
 import { DocumentService } from './services/document.service'
 import { PagesService } from './services/pages.service'
@@ -248,6 +248,16 @@ if (!gotLock) {
       const devIcon = join(__dirname, '../../build/icon.png')
       if (existsSync(devIcon)) app.dock.setIcon(devIcon)
     }
+
+    // Forzamos tema oscuro: en Windows oscurece la barra de título nativa (que con
+    // el tema claro del sistema se veía blanca y desentonaba) y también los diálogos
+    // nativos, para que combinen con la interfaz oscura de la app.
+    nativeTheme.themeSource = 'dark'
+
+    // Windows/Linux: quitamos el menú nativo de Electron (File/Edit/View…), que se
+    // dibuja DENTRO de la ventana y duplicaría nuestro menú propio (Archivo/Editar…).
+    // En macOS lo conservamos: va en la barra del sistema y aporta Cmd+Q, copiar/pegar.
+    if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
 
     registerModules()
     mainWindow = createWindow()
