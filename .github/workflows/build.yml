@@ -44,7 +44,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ghostscript
       - name: Instalar Ghostscript (Windows)
         if: runner.os == 'Windows'
-        run: choco install ghostscript -y --no-progress
+        shell: pwsh
+        run: |
+          $url = "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe"
+          $out = "$env:RUNNER_TEMP\gs-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $out
+          # Instalador NSIS: /S silencioso, /D destino (último arg, sin comillas).
+          Start-Process -FilePath $out -ArgumentList '/S','/D=C:\gs' -Wait
+          if (!(Test-Path 'C:\gs\bin\gswin64c.exe')) { throw 'No se instaló Ghostscript en C:\gs' }
+          Write-Host 'Ghostscript instalado en C:\gs'
 
       # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
       - name: Generar instaladores

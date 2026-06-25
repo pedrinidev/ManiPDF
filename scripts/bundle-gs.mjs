@@ -31,8 +31,11 @@ function log(msg) {
 /** Localiza el ejecutable de Ghostscript del sistema (resolviendo symlinks). */
 function findGs() {
   if (platform === 'win32') {
-    // Choco instala en C:\Program Files\gs\gs<ver>\bin\gswin64c.exe y no siempre
-    // lo deja en el PATH del paso siguiente: lo buscamos directamente.
+    // Buscamos gswin64c.exe en las rutas donde lo deja el instalador oficial.
+    if (existsSync('C:\\gs\\bin\\gswin64c.exe')) {
+      log('Ghostscript encontrado: C:\\gs\\bin\\gswin64c.exe')
+      return 'C:\\gs\\bin\\gswin64c.exe'
+    }
     for (const base of ['C:\\Program Files\\gs', 'C:\\Program Files (x86)\\gs']) {
       if (!existsSync(base)) continue
       for (const ver of readdirSync(base)) {
@@ -141,15 +144,19 @@ function bundleLinux() {
   reset()
   mkdirSync(join(OUT, 'libs'), { recursive: true })
   cpSync(gsBin, join(OUT, 'bin', 'gs'))
-  // Copiar librerías NO del sistema que reporta ldd
+  // Copiar las librerías que reporta ldd (cierre transitivo), EXCEPTO las del
+  // núcleo glibc / enlazador, que deben venir del sistema del usuario (bundlearlas
+  // rompería). Se identifican por NOMBRE, no por ruta (en /usr fusionado están en /lib).
+  const SKIP = /^(ld-linux|libc|libm|libdl|libpthread|librt|libresolv|libnsl|libutil|libgcc_s)\b/
   const ldd = String(execFileSync('ldd', [gsBin], { stdio: ['ignore', 'pipe', 'ignore'] }))
   for (const line of ldd.split('\n')) {
     const m = line.match(/=>\s+(\/\S+)/)
     if (!m) continue
     const lib = m[1]
-    if (lib.startsWith('/lib') || lib.startsWith('/usr/lib/x86_64-linux-gnu/libc')) continue // sistema base
+    const name = lib.split('/').pop()
+    if (SKIP.test(name)) continue
     try {
-      cpSync(lib, join(OUT, 'libs', lib.split('/').pop()))
+      cpSync(lib, join(OUT, 'libs', name))
     } catch {
       /* omitir */
     }
