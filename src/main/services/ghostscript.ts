@@ -105,25 +105,12 @@ export function ghostscriptEnv(): NodeJS.ProcessEnv {
 
 /** Mensaje amable (según el sistema) cuando no hay Ghostscript ni empaquetado ni en el sistema. */
 export function ghostscriptMissingMessage(): string {
-  let base = 'Esta función necesita Ghostscript, que no se pudo encontrar.'
+  const base = 'Esta función necesita Ghostscript, que no se pudo encontrar.'
   if (process.platform === 'darwin') {
-    base += ' Instálalo con Homebrew: «brew install ghostscript» (o desde ghostscript.com) y reinicia ManiPDF.'
-  } else if (process.platform === 'win32') {
-    base += ' Descárgalo desde ghostscript.com/releases/gsdnld.html, instálalo y reinicia ManiPDF.'
-  } else {
-    base += ' Instálalo con tu gestor de paquetes (p. ej. «sudo apt install ghostscript») y reinicia ManiPDF.'
+    return `${base} Instálalo con Homebrew: «brew install ghostscript» (o desde ghostscript.com) y reinicia ManiPDF.`
   }
-  return `${base}  ${ghostscriptDiagnostics()}`
-}
-
-/** Diagnóstico TEMPORAL para depurar por qué no se encuentra el GS empaquetado. */
-function ghostscriptDiagnostics(): string {
-  const parts = [`arch=${process.platform}-${process.arch}`, `res=${process.resourcesPath ?? '∅'}`]
-  try {
-    const gsDir = join(process.resourcesPath ?? '', 'gs')
-    parts.push(`gs/=${existsSync(gsDir) ? readdirSync(gsDir).join('|') || 'vacío' : 'NO-EXISTE'}`)
-  } catch (e) {
-    parts.push(`gsErr=${(e as Error).message}`)
+  if (process.platform === 'win32') {
+    return `${base} Descárgalo desde ghostscript.com/releases/gsdnld.html, instálalo y reinicia ManiPDF.`
   }
-  return `[diag: ${parts.join('; ')}]`
+  return `${base} Instálalo con tu gestor de paquetes (p. ej. «sudo apt install ghostscript») y reinicia ManiPDF.`
 }
