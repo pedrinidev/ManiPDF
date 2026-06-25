@@ -22,6 +22,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Evita que un paso colgado (p. ej. un instalador esperando interacción)
+    # mantenga el job corriendo durante horas.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -51,10 +54,11 @@ jobs:
           $url = "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10071/gs10071w64.exe"
           $out = "$env:RUNNER_TEMP\gs-setup.exe"
           Invoke-WebRequest -Uri $url -OutFile $out
-          # Instalador NSIS: /S silencioso, /D destino (último arg, sin comillas).
-          Start-Process -FilePath $out -ArgumentList '/S','/D=C:\gs' -Wait
-          if (!(Test-Path 'C:\gs\bin\gswin64c.exe')) { throw 'No se instaló Ghostscript en C:\gs' }
-          Write-Host 'Ghostscript instalado en C:\gs'
+          # Extraemos el instalador NSIS con 7-Zip (NO lo ejecutamos → no se cuelga
+          # esperando interacción). Los archivos quedan en C:\gs\bin, lib, Resource...
+          & 7z x $out "-oC:\gs" -y | Out-Null
+          if (!(Test-Path 'C:\gs\bin\gswin64c.exe')) { throw 'No se extrajo Ghostscript en C:\gs' }
+          Write-Host 'Ghostscript extraido en C:\gs'
 
       # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
       - name: Generar instaladores
