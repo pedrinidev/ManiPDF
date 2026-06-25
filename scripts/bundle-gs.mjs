@@ -17,7 +17,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, rmSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 
 const platform = process.platform
 const arch = process.arch
@@ -223,24 +223,72 @@ function verify() {
   if (platform !== 'win32' && libs === 0) log('AVISO: no se copió ninguna librería → el GS empaquetado podría no arrancar.')
 }
 
+/** GS_LIB (recursos) para invocar el binario empaquetado. */
+function bundledGsLib() {
+  const share = join(OUT, 'share')
+  return [join(share, 'Resource', 'Init'), join(share, 'lib'), join(share, 'iccprofiles')].join(delimiter)
+}
+
+/**
+ * PRUEBA DE EJECUCIÓN: corre el GS empaquetado sobre un PDF de prueba usando solo
+ * sus propios recursos/librerías. Si no produce salida, el bundle está roto.
+ * Devuelve true si funciona.
+ */
+function verifyRun() {
+  const bin = join(OUT, 'bin', binaryName())
+  const input = join(ROOT, 'build', 'manual.pdf')
+  if (!existsSync(input)) {
+    log('Sin PDF de prueba (build/manual.pdf); se omite la prueba de ejecución.')
+    return true
+  }
+  const out = join(OUT, '_selftest.tif')
+  const env = { GS_LIB: bundledGsLib() }
+  if (process.platform === 'win32') env.PATH = process.env.PATH // por si acaso
+  if (process.platform === 'linux') env.LD_LIBRARY_PATH = join(OUT, 'libs')
+  try {
+    execFileSync(
+      bin,
+      ['-dBATCH', '-dNOPAUSE', '-dSAFER', '-sDEVICE=tiff24nc', '-r36', '-dLastPage=1', `-sOutputFile=${out}`, input],
+      { env, stdio: 'ignore' }
+    )
+    const ok = existsSync(out)
+    rmSync(out, { force: true })
+    return ok
+  } catch {
+    return false
+  }
+}
+
+function binaryName() {
+  return platform === 'win32' ? 'gswin64c.exe' : 'gs'
+}
+
 // La carpeta debe existir siempre (electron-builder la incluye como extraResources,
 // aunque en Windows/Linux quede vacía).
 mkdirSync(join(ROOT, 'resources', 'gs'), { recursive: true })
 
 try {
-  if (platform === 'darwin') {
-    // Solo macOS empaqueta Ghostscript (validado y autocontenido). En Windows el
-    // usuario lo instala con el .exe oficial y en Linux por comando; la app avisa
-    // de forma amigable si no está (ghostscriptMissingMessage).
-    bundleMac()
-    writeLicenseNote()
-    verify()
+  // Empaquetamos GS en los 3 SO. La app prioriza el GS empaquetado; si en algún
+  // SO no se pudo o no arranca, se descarta el bundle y la app muestra el aviso.
+  if (platform === 'darwin') bundleMac()
+  else if (platform === 'linux') bundleLinux()
+  else if (platform === 'win32') bundleWin()
+  else throw new Error(`Plataforma no soportada: ${platform}`)
+
+  writeLicenseNote()
+  verify()
+
+  // Solo conservamos el GS empaquetado si REALMENTE arranca (prueba de ejecución).
+  if (verifyRun()) {
+    log('Prueba de ejecución: OK ✓ (GS empaquetado funcional).')
   } else {
-    log(`En ${platform} NO se empaqueta Ghostscript (se instala aparte; la app avisa al usuario).`)
+    log('Prueba de ejecución: FALLÓ → se descarta el GS empaquetado (la app avisará al usuario).')
+    rmSync(OUT, { recursive: true, force: true })
   }
   log('Hecho.')
 } catch (err) {
   // No rompemos el build: si no se pudo empaquetar, la app mostrará el aviso.
   console.error(`[bundle-gs] AVISO: no se empaquetó GS (${err.message}). La app avisará al usuario.`)
+  rmSync(OUT, { recursive: true, force: true })
   process.exit(0)
 }
