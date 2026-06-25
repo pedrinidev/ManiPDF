@@ -5,7 +5,7 @@ import { useDocument } from '../state/document.store'
 import logoUrl from '../assets/logo.svg'
 
 /** Versión mostrada (mantener en sync con package.json). */
-const APP_VERSION = '0.1.2'
+const APP_VERSION = '0.1.3'
 const YOUTUBE_URL = 'https://www.youtube.com/channel/UCjV6RzAUBtA1gDnccxa8-uA'
 
 /**
@@ -45,6 +45,14 @@ export function AboutDialog(): JSX.Element {
               <p className="about-desc">
                 Editor de PDF de escritorio: ver, anotar, organizar páginas, formularios, proteger,
                 comprimir, comparar, OCR y separación de color, en una interfaz sencilla.
+              </p>
+
+              <p className="about-credits">
+                Incluye Ghostscript (© Artifex Software), bajo licencia AGPL v3 —{' '}
+                <a href="https://www.ghostscript.com/" target="_blank" rel="noreferrer">
+                  código y licencia
+                </a>
+                . También usa pdf.js, pdf-lib y Tesseract.
               </p>
 
               <div className="about-grid">

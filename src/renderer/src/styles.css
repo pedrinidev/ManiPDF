@@ -457,7 +457,19 @@ body[data-platform='darwin'] .menu-bar {
 .about-desc {
   font-size: 13px;
   color: var(--text);
+  margin: 0 0 12px;
+}
+
+.about-credits {
+  font-size: 11px;
+  color: var(--text-dim);
   margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.about-credits a {
+  color: var(--accent, #2962ff);
+  text-decoration: none;
 }
 
 .about-grid {

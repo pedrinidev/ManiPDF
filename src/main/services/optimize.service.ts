@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { PDFDocument } from 'pdf-lib'
 import { DocumentService, DocumentError } from './document.service'
-import { resolveGhostscript } from './ghostscript'
+import { resolveGhostscript, ghostscriptEnv } from './ghostscript'
 import type { DocumentId, OpenDocumentDTO, RasterPage } from '@shared/ipc-contract'
 
 const execFileAsync = promisify(execFile)
@@ -89,7 +89,7 @@ export class OptimizeService {
         '-dAutoRotatePages=/None',
         `-sOutputFile=${output}`,
         input
-      ])
+      ], { env: ghostscriptEnv() })
       const out = await readFile(output)
       return out.length > 0 ? new Uint8Array(out) : null
     } catch {

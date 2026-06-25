@@ -21,6 +21,12 @@ asarUnpack:
 extraResources:
   - from: build/manual.pdf
     to: manual.pdf
+  # Ghostscript empaquetado (binario + librerías + recursos) generado por
+  # scripts/bundle-gs.mjs para la plataforma del build. Permite separación de
+  # color / grises sin que el usuario instale nada. (Solo la subcarpeta del SO
+  # actual existe en cada build.)
+  - from: resources/gs
+    to: gs
 # Asocia los .pdf con ManiPDF: aparecerá en "Abrir con…" del sistema (no se pone
 # como predeterminado; eso lo decide el usuario). Solo aplica a la app empaquetada.
 fileAssociations:

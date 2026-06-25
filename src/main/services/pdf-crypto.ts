@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { PDFDocument } from '@cantoo/pdf-lib'
-import { resolveGhostscript } from './ghostscript'
+import { resolveGhostscript, ghostscriptEnv } from './ghostscript'
 
 const execFileAsync = promisify(execFile)
 
@@ -43,7 +43,7 @@ export async function decryptPdf(bytes: Uint8Array, password: string): Promise<D
         '-dCompatibilityLevel=1.7',
         `-sOutputFile=${output}`,
         input
-      ])
+      ], { env: ghostscriptEnv() })
       logs = `${stdout}\n${stderr}`
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string }

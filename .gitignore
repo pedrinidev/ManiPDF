@@ -6,3 +6,6 @@ dist/
 
 # Modelos de OCR de Tesseract (datos descargables, no fuente)
 *.traineddata
+
+# Ghostscript empaquetado: lo genera scripts/bundle-gs.mjs en cada build (binarios, no fuente)
+resources/gs/

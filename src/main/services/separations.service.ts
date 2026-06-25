@@ -8,7 +8,7 @@ import { join as joinPath } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import { FileService } from './file.service'
-import { resolveGhostscript, ghostscriptMissingMessage } from './ghostscript'
+import { resolveGhostscript, ghostscriptMissingMessage, ghostscriptEnv } from './ghostscript'
 import type { DocumentId, InkCoverage, SeparationSpace, SeparationMode } from '@shared/ipc-contract'
 
 const execFileAsync = promisify(execFile)
@@ -58,7 +58,7 @@ export class SeparationsService {
         '-dAutoRotatePages=/None',
         `-sOutputFile=${target}`,
         input
-      ])
+      ], { env: ghostscriptEnv() })
       // Verificación real de que el resultado es solo K (C/M/Y a cero).
       const ink = await measureInkCoverage(gs, target).catch(() => null)
       return { filePath: target, ink }
@@ -130,7 +130,7 @@ export class SeparationsService {
         `-dLastPage=${pageNumber}`,
         `-sOutputFile=${output}`,
         input
-      ])
+      ], { env: ghostscriptEnv() })
 
       const tif = await readFile(output)
       return { space, tiffBase64: Buffer.from(tif).toString('base64') }
@@ -168,7 +168,9 @@ function clampDpi(dpi: number): number {
  *   "0.00000  0.00000  0.00000  0.15018 CMYK OK"
  */
 async function measureInkCoverage(gs: string, pdfPath: string): Promise<InkCoverage | null> {
-  const { stdout } = await execFileAsync(gs, ['-q', '-o', '-', '-sDEVICE=inkcov', pdfPath])
+  const { stdout } = await execFileAsync(gs, ['-q', '-o', '-', '-sDEVICE=inkcov', pdfPath], {
+    env: ghostscriptEnv()
+  })
   const max: InkCoverage = { c: 0, m: 0, y: 0, k: 0 }
   let found = false
   for (const line of stdout.split('\n')) {
