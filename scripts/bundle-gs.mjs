@@ -30,22 +30,42 @@ function log(msg) {
 
 /** Localiza el ejecutable de Ghostscript del sistema (resolviendo symlinks). */
 function findGs() {
-  const names =
-    platform === 'win32'
-      ? ['gswin64c', 'gswin64c.exe', 'gs']
-      : ['/opt/homebrew/bin/gs', '/usr/local/bin/gs', '/usr/bin/gs', 'gs']
-  for (const n of names) {
+  if (platform === 'win32') {
+    // Choco instala en C:\Program Files\gs\gs<ver>\bin\gswin64c.exe y no siempre
+    // lo deja en el PATH del paso siguiente: lo buscamos directamente.
+    for (const base of ['C:\\Program Files\\gs', 'C:\\Program Files (x86)\\gs']) {
+      if (!existsSync(base)) continue
+      for (const ver of readdirSync(base)) {
+        const exe = join(base, ver, 'bin', 'gswin64c.exe')
+        if (existsSync(exe)) {
+          log(`Ghostscript encontrado: ${exe}`)
+          return exe
+        }
+      }
+    }
+    // Respaldo: PATH
+    try {
+      const p = which('gswin64c')
+      if (p) {
+        log(`Ghostscript encontrado (PATH): ${p}`)
+        return p
+      }
+    } catch {
+      /* nada */
+    }
+    throw new Error('No se encontró Ghostscript (gswin64c.exe) en la máquina de build.')
+  }
+
+  for (const n of ['/opt/homebrew/bin/gs', '/usr/local/bin/gs', '/usr/bin/gs', 'gs']) {
     try {
       const out = execFileSync(n, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
-      log(`Ghostscript ${String(out).trim()} encontrado: ${n}`)
-      // Resolver ruta real
-      if (platform !== 'win32') {
-        const real = execFileSync('readlink', ['-f', n.startsWith('/') ? n : which(n)], {
+      const real = String(
+        execFileSync('readlink', ['-f', n.startsWith('/') ? n : which(n)], {
           stdio: ['ignore', 'pipe', 'ignore']
         })
-        return String(real).trim()
-      }
-      return which(n)
+      ).trim()
+      log(`Ghostscript ${String(out).trim()} encontrado: ${real}`)
+      return real
     } catch {
       /* siguiente */
     }
@@ -174,12 +194,35 @@ function writeLicenseNote() {
   )
 }
 
+/** Tamaño total (MB) de una carpeta, recursivo. */
+function dirSizeMB(dir) {
+  if (!existsSync(dir)) return 0
+  let total = 0
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e)
+    const s = statSync(p)
+    total += s.isDirectory() ? dirSizeMB(p) * 1048576 : s.size
+  }
+  return total / 1048576
+}
+
+/** Verifica que el paquete tiene lo esencial; avisa fuerte si algo falta. */
+function verify() {
+  const libs = existsSync(join(OUT, 'libs')) ? readdirSync(join(OUT, 'libs')).length : 0
+  const initOk = existsSync(join(OUT, 'share', 'Resource', 'Init', 'gs_init.ps'))
+  const size = dirSizeMB(OUT).toFixed(1)
+  log(`Verificación → tamaño: ${size} MB · librerías: ${libs} · gs_init.ps: ${initOk ? 'sí' : 'NO'}`)
+  if (!initOk) log('AVISO: faltan recursos de GS (gs_init.ps) → el GS empaquetado podría no funcionar.')
+  if (platform !== 'win32' && libs === 0) log('AVISO: no se copió ninguna librería → el GS empaquetado podría no arrancar.')
+}
+
 try {
   if (platform === 'darwin') bundleMac()
   else if (platform === 'linux') bundleLinux()
   else if (platform === 'win32') bundleWin()
   else throw new Error(`Plataforma no soportada: ${platform}`)
   writeLicenseNote()
+  verify()
   log('Hecho.')
 } catch (err) {
   console.error(`[bundle-gs] ERROR: ${err.message}`)

@@ -10,6 +10,9 @@ on:
   push:
     tags:
       - 'v*'
+  # Permite lanzar el build a mano desde la pestaña Actions (para pruebas, sin
+  # crear versión). En ejecuciones manuales NO se publica Release.
+  workflow_dispatch:
 
 jobs:
   # Un job por sistema operativo (en paralelo). Cada uno genera SUS instaladores.
@@ -58,8 +61,10 @@ jobs:
             dist/*.exe
 
   # Reúne los artefactos de los 3 SO y crea/actualiza la Release de la etiqueta.
+  # Solo en pushes de etiqueta (no en ejecuciones manuales de prueba).
   release:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write # necesario para crear la Release
