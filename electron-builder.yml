@@ -3,6 +3,11 @@ productName: ManiPDF
 directories:
   output: dist
   buildResources: build
+# El "FileDescription" del .exe (nombre que Windows muestra en "Abrir con…") sale
+# de description. Lo fijamos a "ManiPDF" SOLO en el empaquetado, sin cambiar la
+# descripción del repo en package.json.
+extraMetadata:
+  description: ManiPDF
 files:
   - out/**/*
   - package.json

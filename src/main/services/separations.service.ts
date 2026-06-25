@@ -1,6 +1,5 @@
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,18 +8,10 @@ import { join as joinPath } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import { FileService } from './file.service'
+import { resolveGhostscript, ghostscriptMissingMessage } from './ghostscript'
 import type { DocumentId, InkCoverage, SeparationSpace, SeparationMode } from '@shared/ipc-contract'
 
 const execFileAsync = promisify(execFile)
-
-// Electron (app de GUI) no hereda el PATH del shell; buscamos gs en rutas típicas.
-const GS_CANDIDATES = [
-  '/opt/homebrew/bin/gs',
-  '/usr/local/bin/gs',
-  '/opt/local/bin/gs',
-  '/usr/bin/gs',
-  'gs'
-]
 
 /**
  * Lógica del módulo "separations": separación de colores real con Ghostscript.
@@ -44,9 +35,7 @@ export class SeparationsService {
     window: BrowserWindow | null
   ): Promise<{ filePath: string; ink: InkCoverage | null }> {
     const gs = resolveGhostscript()
-    if (!gs) {
-      throw new DocumentError('IO_ERROR', 'No se encontró Ghostscript. Instálalo: brew install ghostscript')
-    }
+    if (!gs) throw new DocumentError('GHOSTSCRIPT_MISSING', ghostscriptMissingMessage())
     const doc = this.documents.getDocument(id)
     const suggested = doc.fileName.replace(/\.pdf$/i, '') + '-grises.pdf'
     const target = await this.files.pickSavePath(window, suggested)
@@ -119,12 +108,7 @@ export class SeparationsService {
     mode: SeparationMode
   ): Promise<{ space: SeparationSpace; tiffBase64: string }> {
     const gs = resolveGhostscript()
-    if (!gs) {
-      throw new DocumentError(
-        'IO_ERROR',
-        'No se encontró Ghostscript. Instálalo con: brew install ghostscript'
-      )
-    }
+    if (!gs) throw new DocumentError('GHOSTSCRIPT_MISSING', ghostscriptMissingMessage())
 
     const doc = this.documents.getDocument(id)
     const space: SeparationSpace = mode === 'auto' ? detectColorSpace(doc.bytes) : mode
@@ -171,13 +155,6 @@ function detectColorSpace(bytes: Uint8Array): SeparationSpace {
     (text.match(/DeviceRGB|CalRGB/g) || []).length + (text.match(/\/N\s+3\b/g) || []).length
   if (cmyk === 0 && rgb === 0) return 'cmyk' // por defecto, flujo de imprenta
   return rgb > cmyk ? 'rgb' : 'cmyk'
-}
-
-function resolveGhostscript(): string | null {
-  for (const path of GS_CANDIDATES) {
-    if (path === 'gs' || existsSync(path)) return path
-  }
-  return null
 }
 
 function clampDpi(dpi: number): number {

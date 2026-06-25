@@ -21,7 +21,8 @@ export class DocumentError extends Error {
       | 'IO_ERROR'
       | 'NO_DOCUMENT'
       | 'WRONG_PASSWORD'
-      | 'DECRYPT_UNSUPPORTED',
+      | 'DECRYPT_UNSUPPORTED'
+      | 'GHOSTSCRIPT_MISSING',
     message: string
   ) {
     super(message)

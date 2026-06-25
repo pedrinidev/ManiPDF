@@ -5,7 +5,7 @@ import { useDocument } from '../state/document.store'
 import logoUrl from '../assets/logo.svg'
 
 /** Versión mostrada (mantener en sync con package.json). */
-const APP_VERSION = '0.1.1'
+const APP_VERSION = '0.1.2'
 const YOUTUBE_URL = 'https://www.youtube.com/channel/UCjV6RzAUBtA1gDnccxa8-uA'
 
 /**

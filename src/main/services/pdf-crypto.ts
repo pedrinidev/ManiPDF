@@ -5,18 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { PDFDocument } from '@cantoo/pdf-lib'
+import { resolveGhostscript } from './ghostscript'
 
 const execFileAsync = promisify(execFile)
-
-/** Rutas habituales del binario de Ghostscript (mismo criterio que el resto). */
-const GS_CANDIDATES = ['gs', '/opt/homebrew/bin/gs', '/usr/local/bin/gs', '/usr/bin/gs']
-
-function resolveGhostscript(): string | null {
-  for (const path of GS_CANDIDATES) {
-    if (path === 'gs' || existsSync(path)) return path
-  }
-  return null
-}
 
 export type DecryptResult =
   | { ok: true; bytes: Uint8Array }

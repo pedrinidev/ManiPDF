@@ -92,6 +92,7 @@ export type IpcErrorCode =
   | 'NO_DOCUMENT' // operación sobre documento que no está abierto
   | 'WRONG_PASSWORD' // contraseña incorrecta al descifrar
   | 'DECRYPT_UNSUPPORTED' // no se puede descifrar (falta Ghostscript)
+  | 'GHOSTSCRIPT_MISSING' // la función requiere Ghostscript y no está instalado
   | 'UNKNOWN'
 
 // ---------------------------------------------------------------------------

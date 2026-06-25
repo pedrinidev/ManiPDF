@@ -1,25 +1,15 @@
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { PDFDocument } from 'pdf-lib'
 import { DocumentService, DocumentError } from './document.service'
+import { resolveGhostscript } from './ghostscript'
 import type { DocumentId, OpenDocumentDTO, RasterPage } from '@shared/ipc-contract'
 
 const execFileAsync = promisify(execFile)
-
-/** Rutas habituales del binario de Ghostscript (igual criterio que separaciones). */
-const GS_CANDIDATES = ['gs', '/opt/homebrew/bin/gs', '/usr/local/bin/gs', '/usr/bin/gs']
-
-function resolveGhostscript(): string | null {
-  for (const path of GS_CANDIDATES) {
-    if (path === 'gs' || existsSync(path)) return path
-  }
-  return null
-}
 
 /**
  * Lógica del módulo "optimize". Dos estrategias de compresión:

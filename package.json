@@ -1,6 +1,6 @@
 {
   "name": "manipdf",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Editor de PDF de escritorio completo (anotaciones, páginas, formularios, OCR, seguridad, separación de color) construido con Electron + React + TypeScript",
   "main": "./out/main/index.js",
   "author": "pedrinimamans",
