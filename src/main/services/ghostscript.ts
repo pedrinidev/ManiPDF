@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
 /**
@@ -28,13 +28,25 @@ interface Resolved {
 
 let cached: Resolved | null | undefined
 
-/** Carpeta del GS empaquetado para esta plataforma/arquitectura, o null. */
+/** Carpeta del GS empaquetado utilizable para esta plataforma, o null. */
 function bundledRoot(): string | null {
-  const sub = join('gs', `${process.platform}-${process.arch}`)
+  const exact = `${process.platform}-${process.arch}`
   const bases = [process.resourcesPath, join(process.cwd(), 'resources')].filter(Boolean) as string[]
   for (const base of bases) {
-    const root = join(base, sub)
-    if (existsSync(join(root, 'bin', binaryName()))) return root
+    const gsDir = join(base, 'gs')
+    if (!existsSync(gsDir)) continue
+    // 1) Coincidencia exacta plataforma-arquitectura.
+    const exactRoot = join(gsDir, exact)
+    if (existsSync(join(exactRoot, 'bin', binaryName()))) return exactRoot
+    // 2) Windows: el binario x64 también corre en Windows ARM (emulación). Aceptamos
+    //    cualquier carpeta win32-* con binario válido (cubre win-arm64 sin GS arm).
+    if (process.platform === 'win32') {
+      for (const d of readdirSync(gsDir)) {
+        if (!d.startsWith('win32-')) continue
+        const root = join(gsDir, d)
+        if (existsSync(join(root, 'bin', binaryName()))) return root
+      }
+    }
   }
   return null
 }
@@ -93,12 +105,25 @@ export function ghostscriptEnv(): NodeJS.ProcessEnv {
 
 /** Mensaje amable (según el sistema) cuando no hay Ghostscript ni empaquetado ni en el sistema. */
 export function ghostscriptMissingMessage(): string {
-  const base = 'Esta función necesita Ghostscript, que no se pudo encontrar.'
+  let base = 'Esta función necesita Ghostscript, que no se pudo encontrar.'
   if (process.platform === 'darwin') {
-    return `${base} Instálalo con Homebrew: «brew install ghostscript» (o desde ghostscript.com) y reinicia ManiPDF.`
+    base += ' Instálalo con Homebrew: «brew install ghostscript» (o desde ghostscript.com) y reinicia ManiPDF.'
+  } else if (process.platform === 'win32') {
+    base += ' Descárgalo desde ghostscript.com/releases/gsdnld.html, instálalo y reinicia ManiPDF.'
+  } else {
+    base += ' Instálalo con tu gestor de paquetes (p. ej. «sudo apt install ghostscript») y reinicia ManiPDF.'
   }
-  if (process.platform === 'win32') {
-    return `${base} Descárgalo desde ghostscript.com/releases/gsdnld.html, instálalo y reinicia ManiPDF.`
+  return `${base}  ${ghostscriptDiagnostics()}`
+}
+
+/** Diagnóstico TEMPORAL para depurar por qué no se encuentra el GS empaquetado. */
+function ghostscriptDiagnostics(): string {
+  const parts = [`arch=${process.platform}-${process.arch}`, `res=${process.resourcesPath ?? '∅'}`]
+  try {
+    const gsDir = join(process.resourcesPath ?? '', 'gs')
+    parts.push(`gs/=${existsSync(gsDir) ? readdirSync(gsDir).join('|') || 'vacío' : 'NO-EXISTE'}`)
+  } catch (e) {
+    parts.push(`gsErr=${(e as Error).message}`)
   }
-  return `${base} Instálalo con tu gestor de paquetes (p. ej. «sudo apt install ghostscript») y reinicia ManiPDF.`
+  return `[diag: ${parts.join('; ')}]`
 }
