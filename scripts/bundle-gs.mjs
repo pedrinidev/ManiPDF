@@ -223,15 +223,24 @@ function verify() {
   if (platform !== 'win32' && libs === 0) log('AVISO: no se copió ninguna librería → el GS empaquetado podría no arrancar.')
 }
 
+// La carpeta debe existir siempre (electron-builder la incluye como extraResources,
+// aunque en Windows/Linux quede vacía).
+mkdirSync(join(ROOT, 'resources', 'gs'), { recursive: true })
+
 try {
-  if (platform === 'darwin') bundleMac()
-  else if (platform === 'linux') bundleLinux()
-  else if (platform === 'win32') bundleWin()
-  else throw new Error(`Plataforma no soportada: ${platform}`)
-  writeLicenseNote()
-  verify()
+  if (platform === 'darwin') {
+    // Solo macOS empaqueta Ghostscript (validado y autocontenido). En Windows el
+    // usuario lo instala con el .exe oficial y en Linux por comando; la app avisa
+    // de forma amigable si no está (ghostscriptMissingMessage).
+    bundleMac()
+    writeLicenseNote()
+    verify()
+  } else {
+    log(`En ${platform} NO se empaqueta Ghostscript (se instala aparte; la app avisa al usuario).`)
+  }
   log('Hecho.')
 } catch (err) {
-  console.error(`[bundle-gs] ERROR: ${err.message}`)
-  process.exit(1)
+  // No rompemos el build: si no se pudo empaquetar, la app mostrará el aviso.
+  console.error(`[bundle-gs] AVISO: no se empaquetó GS (${err.message}). La app avisará al usuario.`)
+  process.exit(0)
 }

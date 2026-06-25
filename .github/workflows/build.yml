@@ -35,24 +35,11 @@ jobs:
         # versiones de npm/Node y resuelve lo que falte. Suficiente para compilar.
         run: npm install
 
-      # Ghostscript en la máquina de build, para empaquetarlo dentro de la app.
-      - name: Instalar Ghostscript (macOS)
+      # Solo macOS empaqueta Ghostscript dentro de la app (validado). En Windows el
+      # usuario lo instala con el .exe oficial y en Linux por comando; la app avisa.
+      - name: Instalar Ghostscript (solo macOS, para empaquetarlo)
         if: runner.os == 'macOS'
         run: brew install ghostscript dylibbundler
-      - name: Instalar Ghostscript (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ghostscript
-      - name: Instalar Ghostscript (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $url = "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10051/gs10051w64.exe"
-          $out = "$env:RUNNER_TEMP\gs-setup.exe"
-          Invoke-WebRequest -Uri $url -OutFile $out
-          # Instalador NSIS: /S silencioso, /D destino (último arg, sin comillas).
-          Start-Process -FilePath $out -ArgumentList '/S','/D=C:\gs' -Wait
-          if (!(Test-Path 'C:\gs\bin\gswin64c.exe')) { throw 'No se instaló Ghostscript en C:\gs' }
-          Write-Host 'Ghostscript instalado en C:\gs'
 
       # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
       - name: Generar instaladores
