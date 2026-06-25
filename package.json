@@ -1,6 +1,6 @@
 {
   "name": "manipdf",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Editor de PDF de escritorio completo (anotaciones, páginas, formularios, OCR, seguridad, separación de color) construido con Electron + React + TypeScript",
   "main": "./out/main/index.js",
   "author": "pedrinimamans",
@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "build:manual": "node scripts/build-manual.mjs",
     "bundle:gs": "node scripts/bundle-gs.mjs",
+    "installers": "node scripts/get-installers.mjs",
     "package": "npm run build:manual && (npm run bundle:gs || echo 'GS no empaquetado') && npm run build && electron-builder --dir",
     "dist": "npm run build:manual && (npm run bundle:gs || echo 'GS no empaquetado') && npm run build && electron-builder --publish never"
   },
