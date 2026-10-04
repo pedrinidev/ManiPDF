@@ -58,10 +58,49 @@ Los 4 críticos pueden **destruir o filtrar contenido del usuario sin ningún av
 | M13 | ✅ Corregido (nuevo) | **Selección de texto en páginas giradas:** la capa de texto de pdf.js se maqueta sin girar y su visor la gira por CSS (`data-main-rotation`); ManiPDF no tenía esas reglas y, en páginas giradas, seleccionar o copiar texto caía en otro sitio | E2E: la capa coincide con el texto visible a 90/180/270° |
 | Bajos | ✅ Corregidos | Deshacer hasta lo guardado deja el documento sin cambios (huella SHA-256 de lo guardado); selección de miniaturas ajustada tras borrar/reordenar/duplicar/insertar; contador «…» de la búsqueda; al cerrar la ventana se pregunta por cada documento **con «Guardar»** (respaldo nativo si el renderer no responde); recordatorio anual como mucho una vez al mes y contando desde cada versión; versión de «Acerca de» desde `package.json`; «Recientes» oculta los archivos que ya no existen; cifrado leído del diccionario `/Encrypt` real y marcadores de color contados por trozos (archivos > 512 MB); «Crear campos» renombra los nombres repetidos; Imágenes → PDF con tamaño Carta, A4 o de la imagen; temporales «manipdf-*» borrados al arrancar; CI ejecuta los tests (macOS) | Tests unitarios + E2E (selección, cierre de ventana con Guardar/Cancelar/Descartar) |
 | Bajos | ⏸ Sin cambios | CI sigue con `npm install`: decisión documentada en el workflow (con `npm ci`, un lockfile generado en otra plataforma puede dejar fuera los binarios opcionales de rollup/esbuild). Licencias (Ghostscript AGPL, MIT vs «Uso personal»): decisión del autor | — |
+| M14 | ✅ Corregido (nuevo, QA final) | Miniaturas tras insertar/borrar: pedían páginas al pdf.js anterior («Invalid page request») o mostraban las antiguas un instante. La lista usa el nº de páginas del pdf.js con el que pinta | QA de la app real: consola sin errores |
 | M12 | ✅ Corregido (nuevo) | pdf-lib lee los JPEG ignorando el desplazamiento del Buffer: imágenes JPEG de menos de 4 KB (firmas pequeñas) fallaban con «SOI not found in JPEG». `bytesFromBase64` devuelve un buffer propio | Test de censura con un JPEG mínimo |
 
 Además, al cambiar el zoom se conserva la página que se estaba viendo (antes el visor
 saltaba a otra zona del documento).
+
+## QA final de la app (2026-10-03)
+
+La app **real** compilada (interfaz `out/renderer` + preload) contra los servicios e IPC
+**reales** del proceso principal (pdf-lib, Ghostscript, tesseract), en una ventana fuera de
+pantalla. Solo se sustituyeron los diálogos del sistema (abrir, guardar, elegir carpeta,
+confirmar) por respuestas preparadas. Cada paso comprueba el resultado en disco (texto con
+pdf.js, campos y cifrado con pdf-lib).
+
+**Resultado: 27/27 pasos correctos, sin errores en la consola.**
+
+| # | Paso | Qué se comprobó |
+|---|------|-----------------|
+| 1–4 | Abrir, información, ir a página, buscar | 4 miniaturas; Carta y PDF 1.7 en Información; «3» + Enter y clic en miniatura mueven el visor; «secreto» → 1/1 resaltado |
+| 5–8 | Girar, duplicar, borrar, reordenar, deshacer/rehacer, insertar, extraer | La copia queda seleccionada; tras borrar, selección vacía; insertadas al final y seleccionadas; la extraída es la página 1 |
+| 9–12 | Anotar, marca de agua y numeración, rellenar formulario, crear campo | Rectángulo + texto + resaltado grabados; «Łukasz Pérez» guardado tal cual; el campo repetido «nombre» se crea como `nombre_2` |
+| 13 | Guardar | 6 páginas, giros correctos, marcadores conservados, «CONFIDENCIAL» y «1 / 6 … 6 / 6» en todas |
+| 14 | Deshacer hasta lo guardado | El documento vuelve a «sin cambios» |
+| 15 | Censurar + Guardar como | «SECRETO-123» no queda en ningún flujo del archivo |
+| 16 | OCR | Extraer texto (español) y PDF buscable; la búsqueda encuentra «usuario» en el escaneo |
+| 17 | Comprimir | Sin pérdida y rasterizado (sin texto seleccionable) |
+| 18 | Proteger | AES-128 (`/V 4`, `/AESV2`); se abre con «abc 123» (con espacio) y no sin contraseña |
+| 19 | PDF con contraseña | Contraseña incorrecta → aviso; correcta → editable; al guardar sigue cifrado con la misma |
+| 20 | PDF restringido | Solo lectura con acciones desactivadas; se desbloquea con la de propietario |
+| 21–22 | Exportar PNG, Imágenes → PDF | 6 PNG en `base-imagenes/`; A4 apaisado para la foto horizontal |
+| 23–24 | Unir y dividir, comparar | 2 + 4 páginas; 3 partes en `base-partes/`; comparación: +1 / −1 líneas |
+| 25 | Separación de color | Planchas CMYK (cian… negro) y documento en grises |
+| 26 | Cerrar la ventana con cambios | Pregunta por cada documento: «Guardar» guarda (con el giro) y cierra |
+| 27 | Recientes | No muestra el archivo borrado del disco |
+
+**Encontrado y corregido durante el QA (M14):** tras insertar o borrar páginas, la lista de
+miniaturas tomaba el nº de páginas nuevo pero pintaba con el pdf.js anterior (que aún se estaba
+recargando): pedía páginas inexistentes («Invalid page request») o mostraba un instante las
+antiguas. Ahora la lista usa el mismo pdf.js con el que pinta.
+
+**Fuera de este QA automático:** imprimir (abre la vista previa del sistema), arrastrar
+archivos desde Finder, los diálogos nativos reales y los instaladores de Windows/Linux (los
+genera la CI desde el código confirmado).
 
 ## Cómo se verificó
 

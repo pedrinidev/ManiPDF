@@ -32,7 +32,7 @@ const ACTIONS: { id: string; icon: IconName; label: string }[] = [
 export function PagesPanel(): JSX.Element | null {
   const { state, undo, redo, canUndo, canRedo } = useDocument()
   const { pdf } = usePdf()
-  const { selected, total, select, reorder, hasSelection, busy, rotate, remove, duplicate, extract, insert } =
+  const { selected, select, reorder, hasSelection, busy, rotate, remove, duplicate, extract, insert } =
     usePages()
   const { currentPage, goToPage } = useNavigation()
   const listRef = useRef<HTMLDivElement>(null)
