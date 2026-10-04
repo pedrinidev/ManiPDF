@@ -1,8 +1,8 @@
-import { randomBytes } from 'node:crypto'
 import { PDFDocument } from '@cantoo/pdf-lib'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import { FileService } from './file.service'
+import { applyEncryption, permissionsToFlags } from './pdf-crypto'
 import type { DocumentId, ProtectOptions } from '@shared/ipc-contract'
 
 /**
@@ -25,12 +25,13 @@ export class SecurityService {
     options: ProtectOptions,
     window: BrowserWindow | null
   ): Promise<{ filePath: string }> {
-    const userPassword = options.userPassword.trim()
+    // Sin recortar: los espacios forman parte de la contraseña que el usuario eligió.
+    const userPassword = options.userPassword
     if (!userPassword) {
       throw new DocumentError('INVALID_PDF', 'La contraseña de apertura no puede estar vacía')
     }
 
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
 
     let pdf: PDFDocument
     try {
@@ -39,25 +40,14 @@ export class SecurityService {
       throw new DocumentError('INVALID_PDF', 'El PDF no es válido o está dañado')
     }
 
-    // Si no se indica contraseña de propietario, generamos una ALEATORIA (no la
-    // igualamos a la de apertura). Así quien abre con la contraseña de apertura no
-    // es el "propietario" y los lectores SÍ respetan los permisos. Si la igualáramos,
-    // el lector daría control total y las restricciones no tendrían efecto.
-    const ownerPassword = options.ownerPassword?.trim() || randomBytes(24).toString('base64')
-
-    const p = options.permissions
-    pdf.encrypt({
+    // Si no se indica contraseña de propietario, applyEncryption genera una
+    // ALEATORIA (no la igualamos a la de apertura). Así quien abre con la contraseña
+    // de apertura no es el "propietario" y los lectores SÍ respetan los permisos.
+    // Siempre AES-128 (antes, con PDF 1.3 o 2.0 la librería usaba RC4 de 40 bits).
+    applyEncryption(pdf, {
       userPassword,
-      ownerPassword,
-      permissions: {
-        printing: p.printing ? 'highResolution' : false,
-        modifying: p.modifying,
-        copying: p.copying,
-        annotating: p.modifying,
-        fillingForms: p.modifying,
-        contentAccessibility: p.copying,
-        documentAssembly: p.modifying
-      }
+      ownerPassword: options.ownerPassword || null,
+      permissions: permissionsToFlags(options.permissions)
     })
 
     const encrypted = await pdf.save()

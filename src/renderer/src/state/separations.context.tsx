@@ -19,6 +19,7 @@ import {
   decodeCmykPlates,
   decodeRgbPlates,
   imageDataToPngBase64,
+  limitPlateCache,
   plateGrayImageData,
   type DecodedPlate
 } from '../services/separation-utils'
@@ -41,13 +42,30 @@ interface SeparationsContextValue {
   setMode: (mode: SeparationMode) => void
   toggle: (name: string) => void
   toggleGrayView: () => void
+  /** Una página del visor que muestra la separación (se monta). */
   ensurePage: (pageNumber: number) => void
+  /** La página deja de mostrarse (se desmonta): sus planchas pueden descartarse. */
+  releasePage: (pageNumber: number) => void
   getPlates: (pageNumber: number) => DecodedPlate[] | undefined
   exportAll: () => Promise<void>
   exportGrayPdf: () => Promise<void>
 }
 
 const SeparationsContext = createContext<SeparationsContextValue | null>(null)
+
+/** Renders de Ghostscript simultáneos (antes, uno por página a la vez). */
+const MAX_IN_FLIGHT = 2
+/** Páginas con planchas en memoria; se descartan las más alejadas de la vista. */
+const MAX_CACHED_PAGES = 6
+
+/** Una página pendiente de separar, con el contexto con el que se pidió. */
+interface PendingRender {
+  pageNumber: number
+  generation: number
+  docId: string
+  dpi: number
+  mode: SeparationMode
+}
 
 export function SeparationsProvider({ children }: { children: ReactNode }): JSX.Element {
   const { state, reportError } = useDocument()
@@ -67,11 +85,23 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
   const [mode, setModeState] = useState<SeparationMode>('auto')
   const [space, setSpace] = useState<SeparationSpace | null>(null)
   const loadingRef = useRef<Set<number>>(new Set())
+  // Cada cambio de documento, modo o resolución abre una «generación» nueva: los
+  // renders de la anterior que lleguen tarde se descartan (antes se pintaban las
+  // planchas de otro documento o del modo anterior).
+  const generationRef = useRef(0)
+  const queueRef = useRef<PendingRender[]>([])
+  const inFlightRef = useRef(0)
+  // Páginas montadas ahora en el visor: sus planchas nunca se descartan (si no,
+  // con muchas páginas visibles se regenerarían en bucle).
+  const mountedRef = useRef<Map<number, number>>(new Map())
 
   const reset = useCallback(() => {
+    generationRef.current += 1
+    queueRef.current = []
     setCache(new Map())
     setInkNames([])
     loadingRef.current = new Set()
+    setBusy(false)
   }, [])
 
   // Al cambiar de documento limpiamos la caché de planchas (están cacheadas por
@@ -126,19 +156,22 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
     [reset]
   )
 
-  const ensurePage = useCallback(
-    (pageNumber: number) => {
-      if (!docId || !active) return
-      if (cache.has(pageNumber) || loadingRef.current.has(pageNumber)) return
-      loadingRef.current.add(pageNumber)
-      setBusy(true)
+  /** Lanza renders pendientes sin superar MAX_IN_FLIGHT. */
+  const pump = useCallback(() => {
+    while (inFlightRef.current < MAX_IN_FLIGHT && queueRef.current.length > 0) {
+      const job = queueRef.current.shift() as PendingRender
+      inFlightRef.current += 1
+      const current = (): boolean => job.generation === generationRef.current
       separationsClient
-        .render(docId, pageNumber, dpi, mode)
+        .render(job.docId, job.pageNumber, job.dpi, job.mode)
         .then(({ space: usedSpace, tiffBase64 }) => {
+          if (!current()) return
           setSpace(usedSpace)
           const decoded =
             usedSpace === 'rgb' ? decodeRgbPlates(tiffBase64) : decodeCmykPlates(tiffBase64)
-          setCache((prev) => new Map(prev).set(pageNumber, decoded))
+          setCache((prev) =>
+            limitPlateCache(new Map(prev).set(job.pageNumber, decoded), job.pageNumber, mountedRef.current, MAX_CACHED_PAGES)
+          )
           setInkNames((prev) => {
             const set = new Set(prev)
             decoded.forEach((d) => set.add(d.name))
@@ -152,17 +185,41 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
           })
         })
         .catch((err) => {
-          if (!(err instanceof ClientError && err.isCancellation)) {
+          if (current() && !(err instanceof ClientError && err.isCancellation)) {
             reportError(err instanceof Error ? err.message : 'Error al separar colores')
           }
         })
         .finally(() => {
-          loadingRef.current.delete(pageNumber)
-          setBusy(loadingRef.current.size > 0)
+          inFlightRef.current -= 1
+          if (current()) {
+            loadingRef.current.delete(job.pageNumber)
+            setBusy(loadingRef.current.size > 0)
+          }
+          pump()
         })
+    }
+  }, [reportError])
+
+  const ensurePage = useCallback(
+    (pageNumber: number) => {
+      const mounted = mountedRef.current
+      mounted.set(pageNumber, (mounted.get(pageNumber) ?? 0) + 1)
+      if (!docId || !active) return
+      if (cache.has(pageNumber) || loadingRef.current.has(pageNumber)) return
+      loadingRef.current.add(pageNumber)
+      setBusy(true)
+      queueRef.current.push({ pageNumber, generation: generationRef.current, docId, dpi, mode })
+      pump()
     },
-    [docId, active, cache, dpi, mode, reportError]
+    [docId, active, cache, dpi, mode, pump]
   )
+
+  const releasePage = useCallback((pageNumber: number) => {
+    const mounted = mountedRef.current
+    const count = (mounted.get(pageNumber) ?? 1) - 1
+    if (count > 0) mounted.set(pageNumber, count)
+    else mounted.delete(pageNumber)
+  }, [])
 
   const getPlates = useCallback((pageNumber: number) => cache.get(pageNumber), [cache])
 
@@ -222,11 +279,12 @@ export function SeparationsProvider({ children }: { children: ReactNode }): JSX.
       toggle,
       toggleGrayView,
       ensurePage,
+      releasePage,
       getPlates,
       exportAll,
       exportGrayPdf
     }),
-    [active, dpi, enabled, inkNames, busy, grayView, mode, space, start, exit, setDpi, setMode, toggle, toggleGrayView, ensurePage, getPlates, exportAll, exportGrayPdf]
+    [active, dpi, enabled, inkNames, busy, grayView, mode, space, start, exit, setDpi, setMode, toggle, toggleGrayView, ensurePage, releasePage, getPlates, exportAll, exportGrayPdf]
   )
 
   return <SeparationsContext.Provider value={value}>{children}</SeparationsContext.Provider>

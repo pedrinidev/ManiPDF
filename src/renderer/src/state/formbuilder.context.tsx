@@ -35,7 +35,8 @@ interface FormBuilderContextValue {
   setFieldName: (n: string) => void
   addField: (page: number, rect: RectArea) => void
   removeField: (id: string) => void
-  apply: () => Promise<void>
+  /** false si no se pudieron crear (error ya mostrado). */
+  apply: () => Promise<boolean>
 }
 
 const FormBuilderContext = createContext<FormBuilderContextValue | null>(null)
@@ -84,7 +85,7 @@ export function FormBuilderProvider({ children }: { children: ReactNode }): JSX.
   const removeField = useCallback((id: string) => setFields((prev) => prev.filter((f) => f.id !== id)), [])
 
   const apply = useCallback(async () => {
-    if (!state.doc || fields.length === 0) return
+    if (!state.doc || fields.length === 0) return true
     setBusy(true)
     try {
       const payload: NewFormField[] = fields.map(({ id, ...f }) => {
@@ -95,10 +96,12 @@ export function FormBuilderProvider({ children }: { children: ReactNode }): JSX.
       setFields([])
       setFieldName('')
       exitEditMode()
+      return true
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al crear los campos')
       }
+      return false
     } finally {
       setBusy(false)
     }

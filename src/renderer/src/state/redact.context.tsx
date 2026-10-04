@@ -32,7 +32,8 @@ interface RedactContextValue {
   exit: () => void
   addRect: (page: number, rect: RectArea) => void
   removeRect: (id: string) => void
-  apply: () => Promise<void>
+  /** false si no se pudo aplicar (error ya mostrado). */
+  apply: () => Promise<boolean>
 }
 
 const RedactContext = createContext<RedactContextValue | null>(null)
@@ -40,7 +41,7 @@ const RedactContext = createContext<RedactContextValue | null>(null)
 export function RedactProvider({ children }: { children: ReactNode }): JSX.Element {
   const { state, applyDocUpdate, reportError, editMode, requestEditMode, exitEditMode, registerEditor } =
     useDocument()
-  const { pdf } = usePdf()
+  const { pdf, revision } = usePdf()
 
   // El modo "censurar" está activo cuando el modo de edición del store es 'redact'.
   const active = editMode === 'redact'
@@ -63,8 +64,11 @@ export function RedactProvider({ children }: { children: ReactNode }): JSX.Eleme
   const removeRect = useCallback((id: string) => setRects((prev) => prev.filter((r) => r.id !== id)), [])
 
   const apply = useCallback(async () => {
-    if (!state.doc || !pdf || rects.length === 0) return
+    if (!state.doc || !pdf || rects.length === 0) return true
     setBusy(true)
+    // La revisión de lo que se va a rasterizar (la que muestra el visor), no la del
+    // store: justo tras una edición, el visor aún puede tener la versión anterior.
+    const baseRevision = revision ?? -1
     try {
       // Agrupa las zonas por página y rasteriza cada página afectada.
       const byPage = new Map<number, RectArea[]>()
@@ -78,18 +82,20 @@ export function RedactProvider({ children }: { children: ReactNode }): JSX.Eleme
         const img = await renderPageRedacted(pdf, page, REDACT_SCALE, areas)
         pages.push({ pageIndex: page - 1, ...img })
       }
-      const updated = await redactClient.apply(state.doc.id, pages)
+      const updated = await redactClient.apply(state.doc.id, pages, baseRevision)
       applyDocUpdate(updated)
       setRects([])
       exitEditMode()
+      return true
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al redactar')
       }
+      return false
     } finally {
       setBusy(false)
     }
-  }, [state.doc, pdf, rects, applyDocUpdate, reportError, exitEditMode])
+  }, [state.doc, pdf, revision, rects, applyDocUpdate, reportError, exitEditMode])
 
   // Registra en el coordinador si hay zonas sin grabar y cómo grabarlas/descartarlas.
   const discard = useCallback(() => setRects([]), [])

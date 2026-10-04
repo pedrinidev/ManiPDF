@@ -1,14 +1,15 @@
 import { Buffer } from 'node:buffer'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { join as joinPath } from 'node:path'
+import { basename, join as joinPath } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
-import { FileService } from './file.service'
-import { resolveGhostscript, ghostscriptMissingMessage, ghostscriptEnv } from './ghostscript'
+import { FileService, safeFileName } from './file.service'
+import { resolveGhostscript, ghostscriptMissingMessage, ghostscriptEnv, gsOutputPath } from './ghostscript'
+import { countColorMarkers } from './pdf-metadata'
+import { makeTempDir } from './temp'
 import type { DocumentId, InkCoverage, SeparationSpace, SeparationMode } from '@shared/ipc-contract'
 
 const execFileAsync = promisify(execFile)
@@ -41,8 +42,11 @@ export class SeparationsService {
     const target = await this.files.pickSavePath(window, suggested)
     if (!target) throw new DocumentError('CANCELLED', 'Exportación cancelada por el usuario')
 
-    const dir = await mkdtemp(join(tmpdir(), 'pdfgray-'))
+    const dir = await makeTempDir('gray')
     const input = join(dir, 'input.pdf')
+    // Ghostscript escribe en un temporal con nombre fijo y después se copia (de forma
+    // atómica) a la ruta elegida: así ningún carácter del nombre le afecta.
+    const output = join(dir, 'output.pdf')
     try {
       await writeFile(input, doc.bytes)
       // ColorConversionStrategy=Gray + DeviceGray → todo a una sola tinta negra
@@ -56,11 +60,12 @@ export class SeparationsService {
         '-sColorConversionStrategy=Gray',
         '-dOverrideICC',
         '-dAutoRotatePages=/None',
-        `-sOutputFile=${target}`,
+        `-sOutputFile=${gsOutputPath(output)}`,
         input
       ], { env: ghostscriptEnv() })
       // Verificación real de que el resultado es solo K (C/M/Y a cero).
-      const ink = await measureInkCoverage(gs, target).catch(() => null)
+      const ink = await measureInkCoverage(gs, output).catch(() => null)
+      await this.files.write(target, new Uint8Array(await readFile(output)))
       return { filePath: target, ink }
     } catch (err) {
       throw new DocumentError('IO_ERROR', `Fallo al exportar a negro: ${describe(err)}`)
@@ -77,16 +82,19 @@ export class SeparationsService {
     if (files.length === 0) {
       throw new DocumentError('IO_ERROR', 'No hay separaciones que exportar')
     }
-    const dir = await this.files.pickDirectory(window)
-    if (!dir) throw new DocumentError('CANCELLED', 'Exportación cancelada por el usuario')
+    const parent = await this.files.pickDirectory(window)
+    if (!parent) throw new DocumentError('CANCELLED', 'Exportación cancelada por el usuario')
     try {
+      // Subcarpeta nueva: no sobrescribe exportaciones anteriores. Los nombres que
+      // llegan del renderer se sanean (sin rutas): nada puede escribirse fuera de ella.
+      const dir = await this.files.createUniqueFolder(parent, 'separacion-planchas')
       for (const f of files) {
-        await this.files.write(joinPath(dir, f.name), Buffer.from(f.pngBase64, 'base64'))
+        await this.files.write(joinPath(dir, safeFileName(basename(f.name))), Buffer.from(f.pngBase64, 'base64'))
       }
+      return { dir, count: files.length }
     } catch {
       throw new DocumentError('IO_ERROR', 'No se pudieron escribir las separaciones')
     }
-    return { dir, count: files.length }
   }
 
   /**
@@ -114,7 +122,7 @@ export class SeparationsService {
     const space: SeparationSpace = mode === 'auto' ? detectColorSpace(doc.bytes) : mode
     const device = space === 'rgb' ? 'tiff24nc' : 'tiff32nc'
 
-    const dir = await mkdtemp(join(tmpdir(), 'pdfsep-'))
+    const dir = await makeTempDir('sep')
     const input = join(dir, 'input.pdf')
     const output = join(dir, 'page.tif')
 
@@ -128,7 +136,7 @@ export class SeparationsService {
         `-r${clampDpi(dpi)}`,
         `-dFirstPage=${pageNumber}`,
         `-dLastPage=${pageNumber}`,
-        `-sOutputFile=${output}`,
+        `-sOutputFile=${gsOutputPath(output)}`,
         input
       ], { env: ghostscriptEnv() })
 
@@ -149,10 +157,7 @@ export class SeparationsService {
  * comprimidos pueden ocultarlos); por eso la UI permite forzar el modo.
  */
 function detectColorSpace(bytes: Uint8Array): SeparationSpace {
-  const text = Buffer.from(bytes).toString('latin1')
-  const cmyk = (text.match(/DeviceCMYK/g) || []).length + (text.match(/\/N\s+4\b/g) || []).length
-  const rgb =
-    (text.match(/DeviceRGB|CalRGB/g) || []).length + (text.match(/\/N\s+3\b/g) || []).length
+  const { cmyk, rgb } = countColorMarkers(bytes)
   if (cmyk === 0 && rgb === 0) return 'cmyk' // por defecto, flujo de imprenta
   return rgb > cmyk ? 'rgb' : 'cmyk'
 }

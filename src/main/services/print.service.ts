@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BrowserWindow, shell } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
+import { makeTempDir } from './temp'
 import type { DocumentId } from '@shared/ipc-contract'
 
 /**
@@ -24,7 +24,7 @@ export class PrintService {
   async print(id: DocumentId, parent: BrowserWindow | null): Promise<{ printed: boolean }> {
     const doc = this.documents.getDocument(id)
 
-    const dir = await mkdtemp(join(tmpdir(), 'pdfprint-'))
+    const dir = await makeTempDir('print')
     const file = join(dir, 'document.pdf')
 
     const printer = new BrowserWindow({

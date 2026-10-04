@@ -165,9 +165,48 @@ body[data-platform='darwin'] .menu-bar {
 .menu-bar .menu,
 .menu-bar .btn,
 .menu-bar-actions,
-.menu-bar-zoom {
+.menu-bar-zoom,
+.page-nav {
   -webkit-app-region: no-drag;
 }
+
+/* ---- Selector de página («‹ [32] / 120 ›») ---- */
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.page-nav .btn.icon {
+  width: 24px;
+  height: 24px;
+}
+
+.page-nav-input {
+  width: 46px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 4px 2px;
+}
+
+.page-nav-input:focus {
+  border-color: var(--accent);
+}
+
+.page-nav-total {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
 
 .menu-bar-actions {
   display: flex;
@@ -183,6 +222,7 @@ body[data-platform='darwin'] .menu-bar {
 .menu-bar .menu-trigger {
   background: none;
   border: 1px solid transparent;
+  white-space: nowrap;
 }
 
 .menu-bar .menu-trigger:hover,
@@ -1425,8 +1465,24 @@ body[data-platform='darwin'] .menu-bar {
   background: rgba(76, 141, 255, 0.12);
 }
 
-.thumb.drop-target {
-  border-top: 2px solid var(--accent);
+/* Página que se está viendo en el visor (distinto de «seleccionada»). */
+.thumb.current .thumb-canvas {
+  outline: 2px solid var(--text-dim);
+  outline-offset: 1px;
+}
+
+.thumb.current .thumb-number {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Dónde quedará la página arrastrada al soltarla: antes o después de esta. */
+.thumb.drop-before {
+  border-top-color: var(--accent);
+}
+
+.thumb.drop-after {
+  border-bottom-color: var(--accent);
 }
 
 .thumb-canvas {
@@ -1605,8 +1661,12 @@ body[data-platform='darwin'] .menu-bar {
   border-radius: 2px;
 }
 
+/* El hueco de cada página lo fija el visor (tamaño × zoom); el canvas lo llena. Al
+   cambiar el zoom, el bitmap anterior se estira un instante hasta que llega el nuevo. */
 .page-canvas {
   display: block;
+  width: 100%;
+  height: 100%;
   border-radius: 2px;
 }
 
@@ -1621,6 +1681,19 @@ body[data-platform='darwin'] .menu-bar {
   forced-color-adjust: none;
   transform-origin: 0 0;
   z-index: 3;
+}
+
+/* pdf.js maqueta la capa con las medidas de la página SIN girar y marca el giro en
+   data-main-rotation; su visor la gira con estas reglas para que coincida con el
+   canvas. Sin ellas, en las páginas giradas la selección de texto caía en otro sitio. */
+.textLayer[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.textLayer[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.textLayer[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
 }
 
 .textLayer span,
@@ -1779,4 +1852,57 @@ body[data-platform='darwin'] .menu-bar {
 
 .error-banner-close:hover {
   background: rgba(255, 92, 92, 0.2);
+}
+
+/* ---- Aviso de documento de solo lectura (PDF protegido) ---- */
+.readonly-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(255, 193, 7, 0.1);
+  border-bottom: 1px solid rgba(255, 193, 7, 0.35);
+}
+
+.readonly-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Barra superior adaptable ----
+   Al final del archivo para que prevalezca sobre las reglas base de la barra. */
+/* Ventanas estrechas (la mínima es 900 px): la barra se compacta para que el zoom
+   no quede fuera. Imprimir sigue en Archivo (Cmd/Ctrl+P) y anterior/siguiente
+   en el propio campo de página. */
+@media (max-width: 1120px) {
+  .menu-bar {
+    gap: 8px;
+  }
+  .search-field input {
+    width: 96px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .menu-bar .menu-trigger {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .search-field input {
+    width: 64px;
+  }
+  .page-nav .btn.icon,
+  .menu-bar .btn.menu-bar-print {
+    display: none;
+  }
+}
+
+/* Por debajo de esto el nombre del archivo no cabe: queda solo como separador
+   (el nombre sigue en la pestaña). */
+@media (max-width: 960px) {
+  .menu-bar-title {
+    visibility: hidden;
+  }
 }

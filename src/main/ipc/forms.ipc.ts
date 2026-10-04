@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { FormsService } from '../services/forms.service'
-import { handle } from './handle'
+import { handle, handleExclusive } from './handle'
 import { IpcChannel } from '@shared/ipc-contract'
 import type { FormFieldValue, NewFormField } from '@shared/ipc-contract'
 
@@ -13,10 +13,10 @@ export function registerFormsIpc(service: FormsService): void {
   ipcMain.handle(
     IpcChannel.FormsFill,
     (_e, args: { id: string; values: FormFieldValue[]; flatten: boolean }) =>
-      handle(() => service.fill(args.id, args.values, args.flatten))
+      handleExclusive(args.id, () => service.fill(args.id, args.values, args.flatten))
   )
 
   ipcMain.handle(IpcChannel.FormsCreate, (_e, args: { id: string; fields: NewFormField[] }) =>
-    handle(() => service.create(args.id, args.fields))
+    handleExclusive(args.id, () => service.create(args.id, args.fields))
   )
 }

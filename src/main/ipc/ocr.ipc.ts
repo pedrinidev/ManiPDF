@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { OcrService } from '../services/ocr.service'
-import { handle } from './handle'
+import { handle, handleExclusive } from './handle'
 import { IpcChannel } from '@shared/ipc-contract'
 import type { OcrInputPage, OcrLang } from '@shared/ipc-contract'
 
@@ -12,8 +12,8 @@ export function registerOcrIpc(service: OcrService): void {
 
   ipcMain.handle(
     IpcChannel.OcrSearchable,
-    (_e, args: { id: string; lang: OcrLang; pages: OcrInputPage[] }) =>
-      handle(() => service.searchable(args.id, args.lang, args.pages))
+    (_e, args: { id: string; lang: OcrLang; pages: OcrInputPage[]; baseRevision: number }) =>
+      handleExclusive(args.id, () => service.searchable(args.id, args.lang, args.pages, args.baseRevision))
   )
 
   ipcMain.handle(IpcChannel.OcrSaveText, (event, args: { text: string }) =>

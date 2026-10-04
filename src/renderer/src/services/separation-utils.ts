@@ -1,12 +1,19 @@
 import { utif } from './utif'
 
-/** Plancha decodificada a cobertura de tinta (0..1 por píxel). */
+/**
+ * Plancha decodificada: cobertura de tinta por píxel en un byte (0 = sin tinta,
+ * 255 = tinta plena; en RGB, intensidad del canal). Un byte por píxel y canal: con
+ * Float32 una página carta a 300 ppp ocupaba ~128 MB en planchas; así, ~32 MB.
+ */
 export interface DecodedPlate {
   name: string
-  coverage: Float32Array // 0 = sin tinta, 1 = tinta plena
+  coverage: Uint8Array
   width: number
   height: number
 }
+
+/** Byte de cobertura (0..255) → fracción (0..1), precalculado. */
+const UNIT = Float32Array.from({ length: 256 }, (_, v) => v / 255)
 
 const CMYK_NAMES = ['Cyan', 'Magenta', 'Yellow', 'Black'] as const
 const RGB_NAMES = ['Red', 'Green', 'Blue'] as const
@@ -52,15 +59,15 @@ export function decodeCmykPlates(cmykTiffBase64: string): DecodedPlate[] {
 
   const plates: DecodedPlate[] = []
   for (let ch = 0; ch < 4; ch++) {
-    const coverage = new Float32Array(n)
+    const coverage = new Uint8Array(n)
     let max = 0
     for (let i = 0; i < n; i++) {
-      const v = data[i * 4 + ch] / 255
+      const v = data[i * 4 + ch]
       coverage[i] = v
       if (v > max) max = v
     }
     // Descarta canales prácticamente vacíos (umbral ~1/255).
-    if (max > 0.004) plates.push({ name: CMYK_NAMES[ch], coverage, width: w, height: h })
+    if (max > 1) plates.push({ name: CMYK_NAMES[ch], coverage, width: w, height: h })
   }
   return plates
 }
@@ -82,8 +89,8 @@ export function decodeRgbPlates(rgbTiffBase64: string): DecodedPlate[] {
 
   const plates: DecodedPlate[] = []
   for (let ch = 0; ch < 3; ch++) {
-    const coverage = new Float32Array(n)
-    for (let i = 0; i < n; i++) coverage[i] = rgba[i * 4 + ch] / 255
+    const coverage = new Uint8Array(n)
+    for (let i = 0; i < n; i++) coverage[i] = rgba[i * 4 + ch]
     plates.push({ name: RGB_NAMES[ch], coverage, width: w, height: h })
   }
   return plates
@@ -92,7 +99,7 @@ export function decodeRgbPlates(rgbTiffBase64: string): DecodedPlate[] {
 /** Compone los canales RGB activos sobre fondo negro (aditivo, como una pantalla). */
 export function compositeRgbImageData(plates: DecodedPlate[], enabled: Set<string>): ImageData {
   const { width: w, height: h } = plates[0]
-  const chan = (name: string): Float32Array | null =>
+  const chan = (name: string): Uint8Array | null =>
     enabled.has(name) ? (plates.find((p) => p.name === name)?.coverage ?? null) : null
   const r = chan('Red')
   const g = chan('Green')
@@ -100,9 +107,9 @@ export function compositeRgbImageData(plates: DecodedPlate[], enabled: Set<strin
   const out = new Uint8ClampedArray(w * h * 4)
   for (let i = 0; i < w * h; i++) {
     const o = i * 4
-    out[o] = r ? r[i] * 255 : 0
-    out[o + 1] = g ? g[i] * 255 : 0
-    out[o + 2] = b ? b[i] * 255 : 0
+    out[o] = r ? r[i] : 0
+    out[o + 1] = g ? g[i] : 0
+    out[o + 2] = b ? b[i] : 0
     out[o + 3] = 255
   }
   return new ImageData(out, w, h)
@@ -116,7 +123,7 @@ export function compositeRgbGrayImageData(plates: DecodedPlate[], enabled: Set<s
   for (let i = 0; i < w * h; i++) {
     let sum = 0
     for (const c of active) sum += c[i]
-    const v = active.length ? (sum / active.length) * 255 : 0
+    const v = active.length ? sum / active.length : 0
     const o = i * 4
     out[o] = v
     out[o + 1] = v
@@ -139,8 +146,9 @@ export function compositeImageData(plates: DecodedPlate[], enabled: Set<string>)
     let g = 1
     let b = 1
     for (const ink of active) {
-      const c = ink.cov[i]
-      if (c === 0) continue
+      const byte = ink.cov[i]
+      if (byte === 0) continue
+      const c = UNIT[byte]
       r *= 1 - c * ink.abs[0]
       g *= 1 - c * ink.abs[1]
       b *= 1 - c * ink.abs[2]
@@ -167,8 +175,8 @@ export function compositeGrayImageData(plates: DecodedPlate[], enabled: Set<stri
   for (let i = 0; i < w * h; i++) {
     let cov = 0
     for (const c of active) cov += c[i]
-    if (cov > 1) cov = 1
-    const v = 255 - cov * 255 // 0 tinta = blanco, tinta plena = negro
+    if (cov > 255) cov = 255
+    const v = 255 - cov // 0 tinta = blanco, tinta plena = negro
     const o = i * 4
     out[o] = v
     out[o + 1] = v
@@ -186,7 +194,7 @@ export function plateGrayImageData(plate: DecodedPlate, light = false): ImageDat
   const { width: w, height: h, coverage } = plate
   const out = new Uint8ClampedArray(w * h * 4)
   for (let i = 0; i < w * h; i++) {
-    const v = light ? coverage[i] * 255 : 255 - coverage[i] * 255
+    const v = light ? coverage[i] : 255 - coverage[i]
     const o = i * 4
     out[o] = v
     out[o + 1] = v
@@ -210,4 +218,24 @@ function base64ToBytes(base64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
   return bytes
+}
+
+/**
+ * Limita las planchas en memoria: se conservan siempre las de las páginas montadas
+ * en el visor y la recién separada; del resto, las más cercanas a ella hasta `max`
+ * (las demás se regeneran si se vuelve a ellas).
+ */
+export function limitPlateCache<T>(
+  cache: Map<number, T>,
+  around: number,
+  mounted: Map<number, number>,
+  max: number
+): Map<number, T> {
+  if (cache.size <= max) return cache
+  const others = [...cache.keys()]
+    .filter((page) => !mounted.has(page) && page !== around)
+    .sort((a, b) => Math.abs(a - around) - Math.abs(b - around))
+  const room = Math.max(0, max - (cache.size - others.length))
+  const drop = new Set(others.slice(room))
+  return new Map([...cache].filter(([page]) => !drop.has(page)))
 }

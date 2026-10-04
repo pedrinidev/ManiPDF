@@ -2,19 +2,29 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { ConvertService } from '../services/convert.service'
 import { handle } from './handle'
 import { IpcChannel } from '@shared/ipc-contract'
-import type { ImageFormat } from '@shared/ipc-contract'
+import type { ImageFormat, ImagePageSize } from '@shared/ipc-contract'
 
 /** Registra los handlers del módulo "convert" (sin lógica de negocio). */
 export function registerConvertIpc(service: ConvertService): void {
   ipcMain.handle(
-    IpcChannel.ConvertExportImages,
-    (event, args: { format: ImageFormat; images: string[] }) =>
+    IpcChannel.ConvertBeginExport,
+    (event, args: { baseName: string; format: ImageFormat; total: number }) =>
       handle(() =>
-        service.exportImages(args.format, args.images, BrowserWindow.fromWebContents(event.sender))
+        service.beginExport(args.baseName, args.format, args.total, BrowserWindow.fromWebContents(event.sender))
       )
   )
 
-  ipcMain.handle(IpcChannel.ConvertImagesToPdf, (event) =>
-    handle(() => service.imagesToPdf(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle(
+    IpcChannel.ConvertWriteImage,
+    (_e, args: { exportId: string; pageNumber: number; data: Uint8Array }) =>
+      handle(() => service.writeImage(args.exportId, args.pageNumber, args.data))
+  )
+
+  ipcMain.handle(IpcChannel.ConvertEndExport, (_e, args: { exportId: string }) =>
+    handle(() => service.endExport(args.exportId))
+  )
+
+  ipcMain.handle(IpcChannel.ConvertImagesToPdf, (event, args: { pageSize?: ImagePageSize } | undefined) =>
+    handle(() => service.imagesToPdf(args?.pageSize ?? 'letter', BrowserWindow.fromWebContents(event.sender)))
   )
 }

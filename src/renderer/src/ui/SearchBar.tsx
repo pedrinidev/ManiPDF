@@ -4,7 +4,7 @@ import { Icon } from './Icon'
 
 /** Campo de búsqueda compacto, fijo en la barra superior (junto a imprimir). */
 export function SearchBar(): JSX.Element {
-  const { query, matches, current, searching, setQuery, next, prev, clear } = useSearch()
+  const { query, matches, current, searching, reveal, setQuery, next, prev, clear } = useSearch()
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Cmd/Ctrl+F enfoca el campo (sin desplazar la app).
@@ -20,20 +20,29 @@ export function SearchBar(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Lleva la coincidencia activa a la vista desplazando SOLO el documento
+  // Lleva la coincidencia pedida a la vista desplazando SOLO el documento
   // (nunca la app, para que el menú no se mueva).
   useEffect(() => {
-    if (current < 0 || !matches[current]) return
-    const m = matches[current]
+    if (!reveal) return
+    const m = reveal.match
     const container = document.querySelector('.content') as HTMLElement | null
     const page = document.querySelector(`.page-wrapper[data-page="${m.page}"]`) as HTMLElement | null
-    if (!container || !page) return
+    if (!container || !page || m.rects.length === 0) return
     const cRect = container.getBoundingClientRect()
     const pRect = page.getBoundingClientRect()
-    // Posición del match dentro del contenido desplazable.
-    const matchTop = pRect.top - cRect.top + container.scrollTop + m.rect.y * pRect.height
-    container.scrollTo({ top: matchTop - container.clientHeight / 2, behavior: 'smooth' })
-  }, [current, matches])
+    // Posición del match dentro del contenido desplazable (también en horizontal,
+    // por si con zoom la coincidencia queda fuera por un lado).
+    const top = Math.min(...m.rects.map((r) => r.y))
+    const left = Math.min(...m.rects.map((r) => r.x))
+    const matchTop = pRect.top - cRect.top + container.scrollTop + top * pRect.height
+    const matchLeft = pRect.left - cRect.left + container.scrollLeft + left * pRect.width
+    const outOfView = matchLeft < container.scrollLeft || matchLeft > container.scrollLeft + container.clientWidth - 40
+    container.scrollTo({
+      top: matchTop - container.clientHeight / 2,
+      left: outOfView ? matchLeft - container.clientWidth / 3 : container.scrollLeft,
+      behavior: 'smooth'
+    })
+  }, [reveal])
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') (e.shiftKey ? prev : next)()

@@ -13,7 +13,8 @@ import {
 } from 'react'
 import type { DocumentId, OpenDocumentDTO } from '@shared/ipc-contract'
 import { documentClient, ClientError } from '../services/document.client'
-import { addRecent } from '../services/recents'
+import { addRecent, removeRecent } from '../services/recents'
+import { clampZoom, nextZoom, type ZoomAction } from '../services/zoom'
 
 /** Pila de deshacer/rehacer por documento: snapshots (bytes) del PDF. */
 interface DocHistory {
@@ -24,10 +25,24 @@ interface DocHistory {
 /** Modos de edición mutuamente excluyentes (solo uno activo a la vez). */
 export type EditorKind = 'annotate' | 'fields' | 'redact'
 
-/** Cómo grabar (apply) o descartar (discard) los cambios en curso de un modo. */
+/**
+ * Cómo grabar (apply) o descartar (discard) los cambios en curso de un modo.
+ * `apply` devuelve false si NO se pudieron grabar (el modo ya ha mostrado el error).
+ */
 interface EditorDescriptor {
-  apply: () => Promise<void>
+  apply: () => Promise<boolean>
   discard: () => void
+}
+
+/**
+ * Los cambios en curso no se pudieron grabar (el error ya se mostró). Detiene
+ * Guardar/Cerrar: antes se guardaba sin ellos, se daba por guardado y se perdían.
+ */
+class PendingEditsError extends Error {
+  constructor() {
+    super('No se pudieron grabar los cambios pendientes')
+    this.name = 'PendingEditsError'
+  }
 }
 
 const EDIT_LABELS: Record<EditorKind, string> = {
@@ -94,12 +109,10 @@ type Action =
   | { type: 'CLOSED'; id: DocumentId }
   | { type: 'SET_ACTIVE'; id: DocumentId }
   | { type: 'SET_ZOOM'; zoom: number }
+  | { type: 'ZOOM_STEP'; action: ZoomAction }
   | { type: 'MARK_SAVED'; id: DocumentId; filePath: string }
   | { type: 'UNDO'; id: DocumentId; doc: OpenDocumentDTO }
   | { type: 'REDO'; id: DocumentId; doc: OpenDocumentDTO }
-
-const MIN_ZOOM = 0.25
-const MAX_ZOOM = 4
 
 function reducer(state: InternalState, action: Action): InternalState {
   switch (action.type) {
@@ -160,7 +173,17 @@ function reducer(state: InternalState, action: Action): InternalState {
       if (!state.activeId) return state
       return {
         ...state,
-        zooms: { ...state.zooms, [state.activeId]: clamp(action.zoom, MIN_ZOOM, MAX_ZOOM) }
+        zooms: { ...state.zooms, [state.activeId]: clampZoom(action.zoom) }
+      }
+    }
+    case 'ZOOM_STEP': {
+      // Relativo al zoom ACTUAL del estado (no al de un render anterior): pulsar
+      // varias veces seguidas acumula bien.
+      if (!state.activeId) return state
+      const current = state.zooms[state.activeId] ?? 1
+      return {
+        ...state,
+        zooms: { ...state.zooms, [state.activeId]: nextZoom(current, action.action) }
       }
     }
     case 'MARK_SAVED':
@@ -205,10 +228,6 @@ function reducer(state: InternalState, action: Action): InternalState {
   }
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
-}
-
 /** Nombre de archivo a partir de una ruta (para refrescar el título tras "Guardar como"). */
 function baseName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath
@@ -223,9 +242,15 @@ interface DocumentContextValue {
   save: () => Promise<void>
   saveAs: () => Promise<void>
   print: () => Promise<void>
-  closeDoc: (id?: DocumentId) => Promise<void>
+  /**
+   * Cierra la pestaña (preguntando si hay cambios). true si se cerró. `closingWindow`:
+   * se cierra porque se cierra la ventana (solo cambia el texto de la pregunta).
+   */
+  closeDoc: (id?: DocumentId, closingWindow?: boolean) => Promise<boolean>
   setActive: (id: DocumentId) => void
   setZoom: (zoom: number) => void
+  /** Acercar / alejar / 100 % sobre el zoom actual del documento activo. */
+  zoomStep: (action: ZoomAction) => void
   /** Reemplaza el documento (por id) tras una edición. */
   applyDocUpdate: (doc: OpenDocumentDTO) => void
   /** Reemplaza el documento sin registrar en el historial (p. ej. al descifrar). */
@@ -247,8 +272,13 @@ interface DocumentContextValue {
   exitEditMode: () => void
   registerEditor: (
     kind: EditorKind,
-    descriptor: { hasPending: boolean; apply: () => Promise<void>; discard: () => void }
+    descriptor: { hasPending: boolean; apply: () => Promise<boolean>; discard: () => void }
   ) => void
+  /**
+   * Graba la edición en curso (anotaciones, campos, censura) antes de una acción
+   * que lee el documento (exportar, proteger, dividir…). false si no se pudo.
+   */
+  flushPendingEdits: () => Promise<boolean>
   /** true si el modo de edición activo tiene cambios sin grabar. */
   hasUnsavedEdits: boolean
   /** Deshacer/rehacer la última edición del documento activo. */
@@ -307,8 +337,9 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
             saveLabel: 'Grabar'
           })
           if (choice === 'cancel') return false
-          if (choice === 'save') await editor.apply()
-          else editor.discard()
+          if (choice === 'save') {
+            if (!(await editor.apply())) return false // no se grabó: se queda en el modo
+          } else editor.discard()
         } else {
           editor?.discard()
         }
@@ -375,6 +406,8 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         dispatch({ type: 'LOADED', doc })
         addRecent(doc.filePath, doc.fileName)
       } catch (err) {
+        // Ya no existe: fuera de «Recientes».
+        if (err instanceof ClientError && err.code === 'NOT_FOUND') removeRecent(filePath)
         handleError(err, dispatch)
       }
     },
@@ -409,13 +442,23 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
     window.api.app.setDirty(anyDirty)
   }, [anyDirty])
 
-  // Graba la edición en curso (si la hay) antes de guardar/cerrar.
+  // Graba la edición en curso (si la hay) antes de guardar/cerrar/exportar.
+  // Lanza PendingEditsError si no se pudo grabar.
   const flushPending = useCallback(async () => {
     if (editMode && pendingFlags[editMode]) {
       const editor = editorsRef.current[editMode]
-      if (editor) await editor.apply()
+      if (editor && !(await editor.apply())) throw new PendingEditsError()
     }
   }, [editMode, pendingFlags])
+
+  const flushPendingEdits = useCallback(async () => {
+    try {
+      await flushPending()
+      return true
+    } catch {
+      return false
+    }
+  }, [flushPending])
 
   const save = useCallback(async () => {
     if (!activeDoc) return
@@ -442,16 +485,17 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
   const print = useCallback(async () => {
     if (!activeDoc) return
     try {
+      await flushPending() // imprime también lo que aún no se había grabado
       await documentClient.print(activeDoc.id)
     } catch (err) {
       handleError(err, dispatch)
     }
-  }, [activeDoc])
+  }, [activeDoc, flushPending])
 
   const closeDoc = useCallback(
-    async (id?: DocumentId) => {
+    async (id?: DocumentId, closingWindow = false): Promise<boolean> => {
       const target = id ?? activeDoc?.id
-      if (!target) return
+      if (!target) return true
       const targetDoc = internal.docs.find((d) => d.id === target)
       const isActive = target === activeDoc?.id
 
@@ -463,12 +507,12 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
           detail: '¿Quieres guardar una copia del manual en tu equipo?',
           saveLabel: 'Guardar copia'
         })
-        if (choice === 'cancel') return
+        if (choice === 'cancel') return false
         if (choice === 'save') {
           try {
             await documentClient.exportCopy(target)
           } catch (err) {
-            if (err instanceof ClientError && err.isCancellation) return
+            if (err instanceof ClientError && err.isCancellation) return false
           }
         }
         try {
@@ -476,7 +520,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         } finally {
           dispatch({ type: 'CLOSED', id: target })
         }
-        return
+        return true
       }
 
       // "Sucio" = cambios grabados sin guardar O edición en curso (del activo).
@@ -485,10 +529,10 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
       if (dirty) {
         const choice = await window.api.app.confirmUnsaved({
           message: 'El documento tiene cambios sin guardar',
-          detail: `¿Guardar "${targetDoc?.fileName ?? ''}" antes de cerrar la pestaña?`,
+          detail: `¿Guardar "${targetDoc?.fileName ?? ''}" antes de cerrar${closingWindow ? '' : ' la pestaña'}?`,
           saveLabel: 'Guardar'
         })
-        if (choice === 'cancel') return
+        if (choice === 'cancel') return false
         if (choice === 'save') {
           try {
             if (isActive) await flushPending() // graba anotaciones pendientes
@@ -496,9 +540,9 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
             dispatch({ type: 'MARK_SAVED', id: target, filePath })
           } catch (err) {
             // Guardado cancelado (p. ej. diálogo "Guardar como") → no cerramos.
-            if (err instanceof ClientError && err.isCancellation) return
+            if (err instanceof ClientError && err.isCancellation) return false
             handleError(err, dispatch)
-            return
+            return false
           }
         }
         // 'discard' → seguimos y cerramos sin guardar.
@@ -509,37 +553,69 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
       } finally {
         dispatch({ type: 'CLOSED', id: target })
       }
+      return true
     },
     [activeDoc, internal.docs, hasUnsavedEdits, flushPending]
+  )
+
+  // Cerrar la ventana con cambios sin guardar: el main lo pide y aquí se cierra
+  // cada documento con la pregunta de siempre (Guardar / Cancelar / Descartar). El
+  // activo va primero: es el único que puede tener una edición en curso.
+  const closeAllRef = useRef<() => Promise<boolean>>(async () => true)
+  useEffect(() => {
+    closeAllRef.current = async () => {
+      const ordered = [...internal.docs].sort(
+        (a, b) => Number(b.id === activeDoc?.id) - Number(a.id === activeDoc?.id)
+      )
+      for (const d of ordered) {
+        if (!(await closeDoc(d.id, true))) return false
+      }
+      return true
+    }
+  }, [internal.docs, activeDoc, closeDoc])
+  useEffect(
+    () =>
+      window.api.app.onCloseRequested(() => {
+        window.api.app.closeRequestAck()
+        closeAllRef.current().then(
+          (approved) => window.api.app.closeRequestDone(approved),
+          () => window.api.app.closeRequestDone(false)
+        )
+      }),
+    []
   )
 
   const activeHistory = activeDoc ? internal.history[activeDoc.id] : undefined
   const canUndo = !!activeHistory && activeHistory.undo.length > 0
   const canRedo = !!activeHistory && activeHistory.redo.length > 0
 
-  const undo = useCallback(async () => {
-    if (!activeDoc) return
-    const h = internal.history[activeDoc.id]
-    if (!h || h.undo.length === 0) return
-    try {
-      const doc = await documentClient.restore(activeDoc.id, h.undo[h.undo.length - 1])
-      dispatch({ type: 'UNDO', id: activeDoc.id, doc })
-    } catch (err) {
-      handleError(err, dispatch)
-    }
-  }, [activeDoc, internal.history])
+  // Una restauración (deshacer/rehacer) cada vez, y el seguro no se suelta hasta que
+  // el nuevo historial está confirmado: con Cmd+Z mantenido, las repeticiones usaban
+  // el historial anterior y restauraban dos veces el mismo estado (se perdían pasos).
+  const restoringRef = useRef(false)
+  useEffect(() => {
+    restoringRef.current = false
+  }, [internal.history, internal.activeId])
 
-  const redo = useCallback(async () => {
-    if (!activeDoc) return
-    const h = internal.history[activeDoc.id]
-    if (!h || h.redo.length === 0) return
-    try {
-      const doc = await documentClient.restore(activeDoc.id, h.redo[h.redo.length - 1])
-      dispatch({ type: 'REDO', id: activeDoc.id, doc })
-    } catch (err) {
-      handleError(err, dispatch)
-    }
-  }, [activeDoc, internal.history])
+  const restoreSnapshot = useCallback(
+    async (kind: 'UNDO' | 'REDO') => {
+      if (!activeDoc || restoringRef.current) return
+      const h = internal.history[activeDoc.id]
+      const stack = kind === 'UNDO' ? h?.undo : h?.redo
+      if (!stack || stack.length === 0) return
+      restoringRef.current = true
+      try {
+        const doc = await documentClient.restore(activeDoc.id, stack[stack.length - 1])
+        dispatch({ type: kind, id: activeDoc.id, doc })
+      } catch (err) {
+        restoringRef.current = false
+        handleError(err, dispatch)
+      }
+    },
+    [activeDoc, internal.history]
+  )
+  const undo = useCallback(() => restoreSnapshot('UNDO'), [restoreSnapshot])
+  const redo = useCallback(() => restoreSnapshot('REDO'), [restoreSnapshot])
 
   const setActive = useCallback(
     async (id: DocumentId) => {
@@ -551,6 +627,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
     [activeDoc?.id, requestEditMode]
   )
   const setZoom = useCallback((zoom: number) => dispatch({ type: 'SET_ZOOM', zoom }), [])
+  const zoomStep = useCallback((action: ZoomAction) => dispatch({ type: 'ZOOM_STEP', action }), [])
   const applyDocUpdate = useCallback((doc: OpenDocumentDTO) => dispatch({ type: 'DOC_UPDATED', doc }), [])
   const replaceDoc = useCallback((doc: OpenDocumentDTO) => dispatch({ type: 'DOC_REPLACED', doc }), [])
   const reportError = useCallback((message: string) => dispatch({ type: 'ERROR', message }), [])
@@ -569,6 +646,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         closeDoc,
         setActive,
         setZoom,
+        zoomStep,
         applyDocUpdate,
         replaceDoc,
         reportError,
@@ -577,6 +655,7 @@ export function DocumentProvider({ children }: { children: ReactNode }): JSX.Ele
         requestEditMode,
         exitEditMode,
         registerEditor,
+        flushPendingEdits,
         hasUnsavedEdits,
         undo,
         redo,
@@ -595,6 +674,8 @@ function handleError(err: unknown, dispatch: Dispatch<Action>): void {
     dispatch({ type: 'OPEN_CANCELLED' })
     return
   }
+  // El modo de edición ya mostró por qué no pudo grabar: no se tapa ese mensaje.
+  if (err instanceof PendingEditsError) return
   const message = err instanceof Error ? err.message : 'Error inesperado'
   dispatch({ type: 'ERROR', message })
 }

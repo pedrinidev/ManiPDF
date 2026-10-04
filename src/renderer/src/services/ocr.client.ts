@@ -9,8 +9,14 @@ class OcrClient {
     throw new ClientError(result.error.code, result.error.message)
   }
 
-  async searchable(id: DocumentId, lang: OcrLang, pages: OcrInputPage[]): Promise<OpenDocumentDTO> {
-    const result = await window.api.ocr.searchable(id, lang, pages)
+  /** `baseRevision`: versión del documento sobre la que se rasterizaron las páginas. */
+  async searchable(
+    id: DocumentId,
+    lang: OcrLang,
+    pages: OcrInputPage[],
+    baseRevision: number
+  ): Promise<OpenDocumentDTO> {
+    const result = await window.api.ocr.searchable(id, lang, pages, baseRevision)
     if (result.ok) return result.data
     throw new ClientError(result.error.code, result.error.message)
   }

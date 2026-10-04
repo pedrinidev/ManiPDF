@@ -2,49 +2,39 @@ import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
-import { renderPage, renderTextLayer } from '../services/pdf-renderer'
+import {
+  renderPage,
+  renderTextLayer,
+  isRenderCancelled,
+  type PageSize
+} from '../services/pdf-renderer'
 import { AnnotationLayer } from './AnnotationLayer'
 import { SearchHighlightLayer } from './SearchHighlightLayer'
 import { RedactLayer } from './RedactLayer'
 import { LinkLayer } from './LinkLayer'
 import { FormBuilderLayer } from './FormBuilderLayer'
 import { SeparationLayer } from './SeparationLayer'
-import { getRecents } from '../services/recents'
+import { getRecents, pruneMissingRecents, type RecentDoc } from '../services/recents'
 import logoUrl from '../assets/logo.svg'
 
 /**
- * A partir de este nº de páginas el visor VIRTUALIZA: solo renderiza (canvas +
- * capas) las páginas cercanas a la zona visible; el resto son marcadores con
- * altura reservada. Por debajo, se renderiza todo (no compensa el coste).
+ * Margen (px) alrededor de la zona visible en el que las páginas se mantienen
+ * pintadas. Fuera de él se liberan canvas y capas, así la memoria queda acotada
+ * sea cual sea el zoom o el nº de páginas (al 400 % en una pantalla Retina, una
+ * página carta ocupa ~120 MB de canvas).
  */
-const VIRTUALIZE_THRESHOLD = 75
+const RENDER_MARGIN_PX = 1500
 
 /**
- * Vista del visor: renderiza las páginas del documento activo en canvases
- * verticales. En documentos grandes virtualiza para no consumir memoria.
+ * Vista del visor: las páginas del documento activo en vertical. Cada página
+ * ocupa desde el principio su tamaño exacto (pageSizes × zoom), aunque aún no se
+ * haya pintado, y solo se pintan las cercanas a la zona visible.
  */
 export function Viewer(): JSX.Element {
   const { state } = useDocument()
-  const { pdf, error, needsPassword, passwordError, submitPassword } = usePdf()
+  const { pdf, pageSizes, error, needsPassword, passwordError, submitPassword } = usePdf()
   const { doc, zoom } = state
-
-  // Altura estimada por página (para reservar el espacio de las no renderizadas).
-  const [estHeight, setEstHeight] = useState(0)
-  const virtualize = !!pdf && pdf.numPages > VIRTUALIZE_THRESHOLD
-
-  useEffect(() => {
-    if (!pdf || !virtualize) return
-    let cancelled = false
-    pdf
-      .getPage(1)
-      .then((p) => {
-        if (!cancelled) setEstHeight(p.getViewport({ scale: zoom }).height)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [pdf, zoom, virtualize])
+  const dpr = useDevicePixelRatio()
 
   if (!doc) return <EmptyState />
   if (needsPassword) return <PasswordPrompt error={passwordError} onSubmit={submitPassword} />
@@ -52,91 +42,82 @@ export function Viewer(): JSX.Element {
   // Si ya hay un PDF (aunque se esté recargando el mismo doc), lo seguimos
   // mostrando para evitar el parpadeo en blanco; solo mostramos "Renderizando…"
   // cuando aún no hay nada que pintar.
-  if (!pdf) return <div className="viewer-loading">Renderizando…</div>
+  if (!pdf || !pageSizes) return <div className="viewer-loading">Renderizando…</div>
 
   return (
     <div className="viewer">
-      {Array.from({ length: pdf.numPages }, (_, i) => (
-        <PageCanvas
-          key={i + 1}
-          pdf={pdf}
-          pageNumber={i + 1}
-          zoom={zoom}
-          virtualize={virtualize}
-          estimatedHeight={estHeight || Math.round(842 * zoom)}
-        />
+      {pageSizes.map((size, i) => (
+        <PageCanvas key={i + 1} pdf={pdf} pageNumber={i + 1} size={size} zoom={zoom} dpr={dpr} />
       ))}
     </div>
   )
 }
 
+/** Densidad de la pantalla: cambia al mover la ventana entre un monitor normal y uno Retina. */
+function useDevicePixelRatio(): number {
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1)
+  useEffect(() => {
+    const query = window.matchMedia(`(resolution: ${dpr}dppx)`)
+    const onChange = (): void => setDpr(window.devicePixelRatio || 1)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [dpr])
+  return dpr
+}
+
 /**
- * Un canvas por página. Si `virtualize`, solo monta el canvas y las capas cuando
- * la página está cerca de la vista (IntersectionObserver); fuera de vista deja un
- * marcador con altura reservada y libera el canvas → memoria acotada.
+ * Una página. Solo monta el canvas y las capas cuando está cerca de la vista
+ * (IntersectionObserver); fuera de ella queda el hueco con su tamaño exacto.
  */
 function PageCanvas({
   pdf,
   pageNumber,
+  size,
   zoom,
-  virtualize,
-  estimatedHeight
+  dpr
 }: {
   pdf: PDFDocumentProxy
   pageNumber: number
+  size: PageSize
   zoom: number
-  virtualize: boolean
-  estimatedHeight: number
+  dpr: number
 }): JSX.Element {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [visible, setVisible] = useState(!virtualize)
-  // Última altura real renderizada (para que el marcador conserve el espacio).
-  const [renderedH, setRenderedH] = useState(0)
+  // Las primeras páginas se pintan sin esperar al observador (sin parpadeo al abrir).
+  const [visible, setVisible] = useState(pageNumber <= 2)
 
-  // Observa la cercanía a la vista (con margen) para montar/desmontar.
   useEffect(() => {
-    if (!virtualize) {
-      setVisible(true)
-      return
-    }
     const wrap = wrapRef.current
     if (!wrap) return
-    const root = wrap.closest('.content')
     const io = new IntersectionObserver(
       (entries) => setVisible(entries[0]?.isIntersecting ?? false),
-      { root: root ?? null, rootMargin: '1200px 0px' }
+      { root: wrap.closest('.content'), rootMargin: `${RENDER_MARGIN_PX}px 0px` }
     )
     io.observe(wrap)
     return () => io.disconnect()
-  }, [virtualize])
+  }, [])
 
-  // Renderiza el canvas cuando la página está visible.
+  // Pinta la página cuando está cerca de la vista; un zoom (o una recarga) nuevo
+  // cancela el render anterior en vez de pisarlo. `dpr` vuelve a pintar a la
+  // densidad de la pantalla actual.
   useEffect(() => {
     if (!visible) return
     const canvas = canvasRef.current
     if (!canvas) return
-    let cancelled = false
-    renderPage(pdf, pageNumber, canvas, zoom)
-      .then(() => {
-        if (!cancelled) setRenderedH(wrapRef.current?.offsetHeight ?? 0)
-      })
-      .catch(() => {
-        /* error de render a nivel de página individual: se ignora */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [visible, pdf, pageNumber, zoom])
-
-  const placeholderHeight = !visible ? renderedH || estimatedHeight : undefined
+    const job = renderPage(pdf, pageNumber, canvas, zoom)
+    job.promise.catch((err) => {
+      if (!isRenderCancelled(err)) console.warn(`No se pudo pintar la página ${pageNumber}:`, err)
+    })
+    return () => job.cancel()
+  }, [visible, pdf, pageNumber, zoom, dpr])
 
   return (
     <div
       ref={wrapRef}
       className="page-wrapper"
       data-page={pageNumber}
-      style={placeholderHeight ? { minHeight: placeholderHeight } : undefined}
+      style={{ width: size.width * zoom, height: size.height * zoom }}
     >
       {visible && (
         <>
@@ -169,10 +150,14 @@ function TextSelectionLayer({
   useEffect(() => {
     const container = ref.current
     if (!container) return
-    renderTextLayer(pdf, pageNumber, container, zoom).catch(() => {
-      /* capa de texto: ignorar fallo */
+    const job = renderTextLayer(pdf, pageNumber, container, zoom)
+    job.promise.catch((err) => {
+      if (!isRenderCancelled(err)) console.warn(`Capa de texto de la página ${pageNumber}:`, err)
     })
-    return () => container.replaceChildren()
+    return () => {
+      job.cancel()
+      container.replaceChildren()
+    }
   }, [pdf, pageNumber, zoom])
   return <div ref={ref} className="textLayer" />
 }
@@ -214,7 +199,17 @@ function PasswordPrompt({
 
 function EmptyState(): JSX.Element {
   const { openDialog, openByPath } = useDocument()
-  const recents = getRecents()
+  const [recents, setRecents] = useState<RecentDoc[]>(getRecents)
+  // Oculta los recientes que ya no existen (movidos o borrados).
+  useEffect(() => {
+    let alive = true
+    pruneMissingRecents()
+      .then((kept) => alive && setRecents(kept))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
   return (
     <div className="empty-state">
       <img className="empty-logo" src={logoUrl} alt="ManiPDF" width={96} height={96} />

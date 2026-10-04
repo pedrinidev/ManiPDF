@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { usePdf } from '../state/pdf.context'
-import { goToPage } from '../services/navigate'
+import { useNavigation } from '../state/navigation.context'
 
 /** Marcador resuelto: título + nº de página destino + hijos. */
 interface BookmarkNode {
@@ -48,6 +48,7 @@ export function BookmarksPanel(): JSX.Element | null {
 }
 
 function BookmarkItem({ node, depth }: { node: BookmarkNode; depth: number }): JSX.Element {
+  const { goToPage } = useNavigation()
   return (
     <>
       <button

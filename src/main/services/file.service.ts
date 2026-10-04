@@ -1,4 +1,6 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { dialog, BrowserWindow } from 'electron'
 
 const PDF_FILTER = { name: 'PDF', extensions: ['pdf'] }
@@ -101,14 +103,63 @@ export class FileService {
     return result.filePath
   }
 
+  /**
+   * Crea una carpeta NUEVA dentro de `parent` («nombre», «nombre-2», «nombre-3»…)
+   * para dejar en ella varios archivos sin sobrescribir nada de lo que ya había.
+   */
+  async createUniqueFolder(parent: string, name: string): Promise<string> {
+    const base = safeFileName(name)
+    for (let n = 1; n < 1000; n++) {
+      const dir = join(parent, n === 1 ? base : `${base}-${n}`)
+      try {
+        await mkdir(dir)
+        return dir
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      }
+    }
+    throw new Error('No se pudo crear una carpeta nueva')
+  }
+
   /** Lee un archivo de disco como bytes. */
   async read(filePath: string): Promise<Uint8Array> {
     const buffer = await readFile(filePath)
     return new Uint8Array(buffer)
   }
 
-  /** Escribe bytes a disco. */
+  /**
+   * Escribe bytes a disco de forma ATÓMICA: primero en un temporal de la misma
+   * carpeta y después se renombra sobre el destino. Si algo falla a mitad (disco
+   * lleno, cierre inesperado), el archivo anterior queda intacto; antes se
+   * truncaba primero y podía perderse el original.
+   */
   async write(filePath: string, bytes: Uint8Array): Promise<void> {
-    await writeFile(filePath, bytes)
+    // Si la ruta es un enlace simbólico, se escribe en el archivo real (no se
+    // sustituye el enlace por un archivo normal).
+    const target = await realpath(filePath).catch(() => filePath)
+    const temp = join(dirname(target), `.${basename(target)}.${randomBytes(4).toString('hex')}.tmp`)
+    try {
+      await writeFile(temp, bytes)
+      // Conserva los permisos del archivo que se sustituye.
+      const mode = await stat(target).then((s) => s.mode).catch(() => null)
+      if (mode !== null) await chmod(temp, mode).catch(() => {})
+      await rename(temp, target)
+    } catch (err) {
+      await rm(temp, { force: true }).catch(() => {})
+      // Carpeta sin permiso para crear archivos o destino bloqueado al renombrar
+      // (Windows): se escribe directamente, como antes.
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') {
+        await writeFile(target, bytes)
+        return
+      }
+      throw err
+    }
   }
+}
+
+/** Nombre válido como archivo/carpeta en los tres sistemas (sin / \ : * ? " < > |). */
+export function safeFileName(name: string): string {
+  const clean = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').trim()
+  return clean.replace(/^\.+/, '') || 'documento'
 }

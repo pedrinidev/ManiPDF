@@ -60,6 +60,13 @@ jobs:
           if (!(Test-Path 'C:\gs\bin\gswin64c.exe')) { throw 'No se extrajo Ghostscript en C:\gs' }
           Write-Host 'Ghostscript extraido en C:\gs'
 
+      # Tests (vitest) en macOS, la plataforma de desarrollo; van tras instalar
+      # Ghostscript para que corran también los que lo usan. Si fallan, no se
+      # generan los instaladores de macOS.
+      - name: Tests
+        if: runner.os == 'macOS'
+        run: npm test
+
       # build:manual + typecheck + electron-vite build + electron-builder (del SO actual).
       - name: Generar instaladores
         run: npm run dist

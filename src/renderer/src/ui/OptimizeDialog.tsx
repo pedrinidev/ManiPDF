@@ -19,8 +19,8 @@ const RESOLUTIONS: { label: string; scale: number }[] = [
 /** Botón "Comprimir" + modal con los dos modos de optimización. */
 export function OptimizeDialog(): JSX.Element {
   const { state, applyDocUpdate, reportError } = useDocument()
-  const { pdf } = usePdf()
-  const hasDoc = !!state.doc
+  const { pdf, revision } = usePdf()
+  const hasDoc = !!state.doc && !state.doc.readOnly
 
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<Mode>('structure')
@@ -37,13 +37,16 @@ export function OptimizeDialog(): JSX.Element {
   const run = async (): Promise<void> => {
     if (!state.doc) return
     const before = state.doc.data.byteLength
+    // La revisión de lo que se va a rasterizar (la que muestra el visor), no la del
+    // store: justo tras una edición, el visor aún puede tener la versión anterior.
+    const baseRevision = revision ?? -1
     setBusy(true)
     setResult(null)
     try {
       const updated =
         mode === 'structure'
           ? await optimizeClient.lossless(state.doc.id)
-          : await optimizeClient.rebuildFromImages(state.doc.id, await rasterizeAll())
+          : await optimizeClient.rebuildFromImages(state.doc.id, await rasterizeAll(), baseRevision)
       applyDocUpdate(updated)
       setResult({ before, after: updated.data.byteLength })
     } catch (err) {

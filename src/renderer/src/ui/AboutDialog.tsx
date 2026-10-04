@@ -4,8 +4,8 @@ import { bumpModal } from './modal-attention'
 import { useDocument } from '../state/document.store'
 import logoUrl from '../assets/logo.svg'
 
-/** Versión mostrada (mantener en sync con package.json). */
-const APP_VERSION = '0.1.8'
+/** Versión de package.json (inyectada al compilar: ya no se escribe a mano). */
+const APP_VERSION = __APP_VERSION__
 const YOUTUBE_URL = 'https://www.youtube.com/channel/UCjV6RzAUBtA1gDnccxa8-uA'
 
 /**

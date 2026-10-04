@@ -1,6 +1,7 @@
-import { Buffer } from 'node:buffer'
 import { PDFDocument } from 'pdf-lib'
 import { DocumentService, DocumentError } from './document.service'
+import { pruneDeadPages } from './pdf-cleanup'
+import { bytesFromBase64 } from './base64'
 import type { DocumentId, OpenDocumentDTO, RedactedPage } from '@shared/ipc-contract'
 
 /**
@@ -8,15 +9,21 @@ import type { DocumentId, OpenDocumentDTO, RedactedPage } from '@shared/ipc-cont
  * se reemplazan por su imagen rasterizada (con los recuadros negros ya quemados
  * por el renderer), de modo que el contenido bajo el recuadro DESAPARECE. Las
  * páginas sin redacción se copian intactas (conservan su texto).
+ *
+ * Es un documento NUEVO a propósito: no arrastra marcadores, formularios,
+ * metadatos ni estructura del original, que podrían contener el texto censurado.
+ * Antes de guardar se eliminan las páginas originales que `copyPages` arrastra a
+ * través de enlaces internos: si no, la página censurada seguía entera (con su
+ * texto) dentro del archivo.
  */
 export class RedactService {
   constructor(private readonly documents: DocumentService) {}
 
-  async apply(id: DocumentId, redacted: RedactedPage[]): Promise<OpenDocumentDTO> {
+  async apply(id: DocumentId, redacted: RedactedPage[], baseRevision: number): Promise<OpenDocumentDTO> {
     if (redacted.length === 0) {
       throw new DocumentError('INVALID_PDF', 'No se marcó ninguna zona para redactar')
     }
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id, baseRevision)
 
     let src: PDFDocument
     try {
@@ -33,7 +40,7 @@ export class RedactService {
       const red = byIndex.get(i)
       if (red) {
         // Página redactada: insertamos la imagen aplanada (contenido eliminado).
-        const jpg = await out.embedJpg(Buffer.from(red.jpegBase64, 'base64'))
+        const jpg = await out.embedJpg(bytesFromBase64(red.jpegBase64))
         const page = out.addPage([red.widthPt, red.heightPt])
         page.drawImage(jpg, { x: 0, y: 0, width: red.widthPt, height: red.heightPt })
       } else {
@@ -43,6 +50,7 @@ export class RedactService {
       }
     }
 
+    pruneDeadPages(out)
     doc.replaceBytes(await out.save())
     return this.documents.describe(id)
   }

@@ -18,11 +18,13 @@ import { CompareDialog } from './CompareDialog'
 import { SearchBar } from './SearchBar'
 import { AboutDialog } from './AboutDialog'
 import { InfoDialog } from './InfoDialog'
+import { PageNavigator } from './PageNavigator'
 import { Icon } from './Icon'
+import { zoomActionForKey } from '../services/zoom'
 
 /** Barra de menú superior (Archivo / Editar / Ver / Herramientas) estilo escritorio. */
 export function MenuBar(): JSX.Element {
-  const { state, openDialog, save, saveAs, print, closeDoc, setZoom, hasUnsavedEdits, undo, redo, canUndo, canRedo } =
+  const { state, openDialog, save, saveAs, print, closeDoc, zoomStep, hasUnsavedEdits, undo, redo, canUndo, canRedo } =
     useDocument()
   const { start: startRedact } = useRedact()
   const { start: startFields } = useFormBuilder()
@@ -31,6 +33,8 @@ export function MenuBar(): JSX.Element {
   const { printingAllowed } = usePdf()
   const { doc, zoom } = state
   const hasDoc = !!doc
+  // PDF protegido aún cifrado: se ve pero no se puede modificar (ver ReadOnlyBanner).
+  const canEdit = hasDoc && !doc.readOnly
   const canPrint = hasDoc && printingAllowed
   const modKey = window.api.system.platform === 'darwin' ? '⌘' : 'Ctrl+'
 
@@ -38,6 +42,15 @@ export function MenuBar(): JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (!(e.metaKey || e.ctrlKey)) return
+      // Cmd/Ctrl + «+», «−», «0»: zoom del VISOR (re-pinta nítido). Sin esto, en
+      // macOS los capturaba el zoom de Chromium y estiraba la página ya pintada.
+      const zoomAction = zoomActionForKey(e)
+      if (zoomAction) {
+        if (!hasDoc) return
+        e.preventDefault()
+        zoomStep(zoomAction)
+        return
+      }
       const key = e.key.toLowerCase()
       // Si se está escribiendo en un campo, no secuestramos deshacer/rehacer
       // (que el texto use su propio deshacer nativo).
@@ -77,7 +90,7 @@ export function MenuBar(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [hasDoc, canPrint, openDialog, save, saveAs, print, closeDoc, undo, redo])
+  }, [hasDoc, canPrint, openDialog, save, saveAs, print, closeDoc, undo, redo, zoomStep])
 
   return (
     <header className="menu-bar">
@@ -126,27 +139,30 @@ export function MenuBar(): JSX.Element {
             <kbd>{modKey}⇧Z</kbd>
           </button>
           <div className="menu-sep" />
-          <button className="btn" onClick={() => setToolbarOpen(true)} disabled={!hasDoc}>
+          <button className="btn" onClick={() => setToolbarOpen(true)} disabled={!canEdit}>
             Anotar…
           </button>
           <FormsDialog />
-          <button className="btn" onClick={startFields} disabled={!hasDoc}>
+          <button className="btn" onClick={startFields} disabled={!canEdit}>
             Crear campos…
           </button>
-          <button className="btn" onClick={startRedact} disabled={!hasDoc}>
+          <button className="btn" onClick={startRedact} disabled={!canEdit}>
             Censurar (ocultar datos)…
           </button>
         </Menu>
 
         <Menu label="Ver">
-          <button className="btn" onClick={() => setZoom(zoom + 0.25)} disabled={!hasDoc}>
-            Acercar
+          <button className="btn menu-item" onClick={() => zoomStep('in')} disabled={!hasDoc}>
+            <span>Acercar</span>
+            <kbd>{modKey}+</kbd>
           </button>
-          <button className="btn" onClick={() => setZoom(zoom - 0.25)} disabled={!hasDoc}>
-            Alejar
+          <button className="btn menu-item" onClick={() => zoomStep('out')} disabled={!hasDoc}>
+            <span>Alejar</span>
+            <kbd>{modKey}−</kbd>
           </button>
-          <button className="btn" onClick={() => setZoom(1)} disabled={!hasDoc}>
-            Zoom 100%
+          <button className="btn menu-item" onClick={() => zoomStep('reset')} disabled={!hasDoc}>
+            <span>Zoom 100%</span>
+            <kbd>{modKey}0</kbd>
           </button>
         </Menu>
 
@@ -184,7 +200,7 @@ export function MenuBar(): JSX.Element {
       <div className="menu-bar-actions">
         {hasDoc && <SearchBar />}
         <button
-          className="btn icon"
+          className="btn icon menu-bar-print"
           onClick={print}
           disabled={!canPrint}
           title={hasDoc && !printingAllowed ? 'El documento no permite imprimir' : 'Imprimir (Cmd/Ctrl+P)'}
@@ -194,18 +210,32 @@ export function MenuBar(): JSX.Element {
         </button>
       </div>
 
+      {hasDoc && <PageNavigator />}
+
       <div className="menu-bar-zoom">
-        <button className="btn icon" onClick={() => setZoom(zoom - 0.25)} disabled={!hasDoc} aria-label="Alejar">
+        <button
+          className="btn icon"
+          onClick={() => zoomStep('out')}
+          disabled={!hasDoc}
+          title={`Alejar (${modKey}−)`}
+          aria-label="Alejar"
+        >
           <Icon name="minus" size={16} />
         </button>
         <span
           className="zoom-value"
-          onDoubleClick={() => setZoom(1)}
-          title="Doble clic para volver al 100%"
+          onDoubleClick={() => zoomStep('reset')}
+          title={`Doble clic (o ${modKey}0) para volver al 100%`}
         >
           {Math.round(zoom * 100)}%
         </span>
-        <button className="btn icon" onClick={() => setZoom(zoom + 0.25)} disabled={!hasDoc} aria-label="Acercar">
+        <button
+          className="btn icon"
+          onClick={() => zoomStep('in')}
+          disabled={!hasDoc}
+          title={`Acercar (${modKey}+)`}
+          aria-label="Acercar"
+        >
           <Icon name="plus" size={16} />
         </button>
       </div>

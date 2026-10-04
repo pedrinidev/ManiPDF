@@ -6,7 +6,7 @@ import { usePdf } from '../state/pdf.context'
 import { convertClient } from '../services/convert.client'
 import { separationsClient } from '../services/separations.client'
 import { ocrClient } from '../services/ocr.client'
-import { renderPageToImage, extractPageLines } from '../services/pdf-renderer'
+import { renderPageToImageBytes, extractPageLines } from '../services/pdf-renderer'
 import { ClientError, documentClient } from '../services/document.client'
 import type { InkCoverage } from '@shared/ipc-contract'
 
@@ -48,7 +48,7 @@ const RESOLUTIONS = [
 
 /** Exportar el documento a otros formatos (imágenes, grises, texto). */
 export function ExportDialog(): JSX.Element {
-  const { state, reportError } = useDocument()
+  const { state, reportError, flushPendingEdits } = useDocument()
   const { pdf } = usePdf()
   const hasDoc = !!state.doc
 
@@ -56,6 +56,8 @@ export function ExportDialog(): JSX.Element {
   const [format, setFormat] = useState<Format>('png')
   const [dpi, setDpi] = useState(300)
   const [busy, setBusy] = useState(false)
+  /** Progreso de la exportación a imágenes («3/12»). */
+  const [progress, setProgress] = useState<string | null>(null)
   /** Resultado de la última exportación: texto + ruta + nota de verificación. */
   const [result, setResult] = useState<{ text: string; path: string; note?: string } | null>(null)
 
@@ -75,17 +77,38 @@ export function ExportDialog(): JSX.Element {
     setBusy(true)
     setResult(null)
     try {
+      // Lo que aún no se había grabado (anotaciones, campos, censura) también se
+      // exporta; antes salía sin ello. Si no se puede grabar, no se exporta.
+      if (!(await flushPendingEdits())) return
       if (format === 'pdf') {
         const filePath = await documentClient.exportCopy(state.doc.id)
         setResult({ text: 'PDF guardado en:', path: filePath })
       } else if (format === 'png' || format === 'jpg') {
-        const images: string[] = []
-        const scale = dpi / PPP_BASE
-        for (let n = 1; n <= pdf.numPages; n++) {
-          images.push(await renderPageToImage(pdf, n, scale, format))
+        // Página a página: se rasteriza una, se escribe y se libera (antes todas a
+        // la vez en memoria). Se guardan en una subcarpeta nueva: no pisa nada.
+        const total = pdf.numPages
+        const job = await convertClient.beginExport(state.doc.fileName.replace(/\.pdf$/i, ''), format, total)
+        let reduced = false
+        let failure: unknown = null
+        try {
+          for (let n = 1; n <= total; n++) {
+            setProgress(`${n}/${total}`)
+            const image = await renderPageToImageBytes(pdf, n, dpi / PPP_BASE, format)
+            reduced ||= image.reduced
+            await convertClient.writeImage(job.exportId, n, image.bytes)
+          }
+        } catch (err) {
+          failure = err
         }
-        const { dir, count } = await convertClient.exportImages(format, images)
-        setResult({ text: `${count} imagen(es) ${format.toUpperCase()} guardadas en:`, path: dir })
+        const { dir, count } = await convertClient.endExport(job.exportId)
+        if (failure) throw failure
+        setResult({
+          text: `${count} imagen(es) ${format.toUpperCase()} guardadas en:`,
+          path: dir,
+          note: reduced
+            ? 'Algunas páginas muy grandes se exportaron a menor resolución (límite de tamaño de imagen).'
+            : undefined
+        })
       } else if (format === 'gray') {
         const { filePath, ink } = await separationsClient.exportGray(state.doc.id)
         setResult({ text: 'PDF en escala de grises guardado en:', path: filePath, note: inkNote(ink) })
@@ -104,6 +127,7 @@ export function ExportDialog(): JSX.Element {
       }
     } finally {
       setBusy(false)
+      setProgress(null)
     }
   }
 
@@ -181,7 +205,7 @@ export function ExportDialog(): JSX.Element {
                   {result ? 'Listo' : 'Cerrar'}
                 </button>
                 <button className="btn primary" onClick={run} disabled={busy}>
-                  {busy ? 'Exportando…' : result ? 'Exportar de nuevo' : 'Exportar'}
+                  {busy ? `Exportando${progress ? ` ${progress}` : ''}…` : result ? 'Exportar de nuevo' : 'Exportar'}
                 </button>
               </div>
             </div>

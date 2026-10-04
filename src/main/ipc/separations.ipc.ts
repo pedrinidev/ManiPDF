@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { SeparationsService } from '../services/separations.service'
-import { handle } from './handle'
+import { handle, handleExclusive } from './handle'
 import { IpcChannel } from '@shared/ipc-contract'
 import type { SeparationMode } from '@shared/ipc-contract'
 
@@ -19,6 +19,6 @@ export function registerSeparationsIpc(service: SeparationsService): void {
   )
 
   ipcMain.handle(IpcChannel.SeparationsExportGray, (event, args: { id: string }) =>
-    handle(() => service.exportGray(args.id, BrowserWindow.fromWebContents(event.sender)))
+    handleExclusive(args.id, () => service.exportGray(args.id, BrowserWindow.fromWebContents(event.sender)))
   )
 }

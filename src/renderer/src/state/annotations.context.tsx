@@ -65,8 +65,8 @@ interface AnnotationsContextValue {
   clear: () => void
   /** Abre el diálogo para elegir una imagen/firma y activa la herramienta. */
   chooseImage: () => Promise<void>
-  /** Graba todas las anotaciones en el PDF y vacía la capa. */
-  apply: () => Promise<void>
+  /** Graba todas las anotaciones en el PDF y vacía la capa. false si falló (error ya mostrado). */
+  apply: () => Promise<boolean>
 }
 
 const AnnotationsContext = createContext<AnnotationsContextValue | null>(null)
@@ -185,7 +185,7 @@ export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.
   }, [])
 
   const apply = useCallback(async () => {
-    if (!docId || annotations.length === 0) return
+    if (!docId || annotations.length === 0) return true
     setBusy(true)
     try {
       const updated = await annotationsClient.burn(docId, annotations)
@@ -193,10 +193,12 @@ export function AnnotationsProvider({ children }: { children: ReactNode }): JSX.
       setAnnotations([])
       setSelectedId(null)
       exitEditMode()
+      return true
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
         reportError(err instanceof Error ? err.message : 'Error al grabar anotaciones')
       }
+      return false
     } finally {
       setBusy(false)
     }

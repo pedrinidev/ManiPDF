@@ -1,7 +1,8 @@
 import { useEffect, useState, type JSX } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { usePdf } from '../state/pdf.context'
-import { goToPage, openExternal } from '../services/navigate'
+import { useNavigation } from '../state/navigation.context'
+import { openExternal } from '../services/navigate'
 
 /** Un enlace resuelto sobre la página, en coordenadas normalizadas (0..1, origen arriba). */
 interface ResolvedLink {
@@ -16,6 +17,7 @@ interface ResolvedLink {
 /** Overlay de enlaces clicables (internos → saltan de página; externos → navegador). */
 export function LinkLayer({ pageNumber }: { pageNumber: number }): JSX.Element | null {
   const { pdf } = usePdf()
+  const { goToPage } = useNavigation()
   const [links, setLinks] = useState<ResolvedLink[]>([])
 
   useEffect(() => {
@@ -71,10 +73,12 @@ async function resolveLinks(pdf: PDFDocumentProxy, pageNumber: number): Promise<
 
   for (const ann of annotations) {
     if (ann.subtype !== 'Link' || !ann.rect) continue
-    const [x1, y1, x2, y2] = ann.rect
+    // El rect viene en coordenadas PDF; el viewport aplica CropBox y rotación
+    // (antes se dividía sin más y el enlace caía en otro sitio en páginas giradas).
+    const [x1, y1, x2, y2] = vp.convertToViewportRectangle(ann.rect)
     const rect = {
       x: Math.min(x1, x2) / vp.width,
-      y: 1 - Math.max(y1, y2) / vp.height,
+      y: Math.min(y1, y2) / vp.height,
       w: Math.abs(x2 - x1) / vp.width,
       h: Math.abs(y2 - y1) / vp.height
     }

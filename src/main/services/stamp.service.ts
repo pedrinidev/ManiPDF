@@ -1,5 +1,7 @@
 import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib'
 import { DocumentService, DocumentError } from './document.service'
+import { drawInFrame, pageFrame, type PageFrame } from './page-frame'
+import { toEncodable } from './winansi'
 import type { DocumentId, HeaderFooter, OpenDocumentDTO, StampConfig } from '@shared/ipc-contract'
 
 const WATERMARK_ANGLE = 45
@@ -7,12 +9,14 @@ const WATERMARK_ANGLE = 45
 /**
  * Lógica del módulo "stamp": marca de agua, encabezado/pie y numeración.
  * Todo con pdf-lib (`drawText`). Los textos admiten {page}, {total}, {date}.
+ * Se dibuja en el marco de la página TAL COMO SE VE: en una página girada el pie
+ * queda abajo y derecho (antes salía en un lateral y girado).
  */
 export class StampService {
   constructor(private readonly documents: DocumentService) {}
 
   async apply(id: DocumentId, config: StampConfig): Promise<OpenDocumentDTO> {
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
 
     let pdf: PDFDocument
     try {
@@ -28,20 +32,23 @@ export class StampService {
 
     pages.forEach((page, i) => {
       const ctx = { page: i + 1, total, date }
-      this.drawWatermark(page, config, font)
-      this.drawBand(page, config.header, true, config, font, ctx)
-      this.drawBand(page, config.footer, false, config, font, ctx)
+      const frame = pageFrame(page)
+      drawInFrame(page, frame, () => {
+        this.drawWatermark(page, frame, config, font)
+        this.drawBand(page, frame, config.header, true, config, font, ctx)
+        this.drawBand(page, frame, config.footer, false, config, font, ctx)
+      })
     })
 
     doc.replaceBytes(await pdf.save())
     return this.documents.describe(id)
   }
 
-  private drawWatermark(page: PDFPage, config: StampConfig, font: PDFFont): void {
-    const text = config.watermarkText.trim()
+  private drawWatermark(page: PDFPage, frame: PageFrame, config: StampConfig, font: PDFFont): void {
+    const text = toEncodable(config.watermarkText.trim(), font)
     if (!text) return
 
-    const { width: W, height: H } = page.getSize()
+    const { width: W, height: H } = frame
     const size = Math.max(8, Math.min(W, H) * 0.08)
     const color = hexToRgb(config.watermarkColor)
     const textWidth = font.widthOfTextAtSize(text, size)
@@ -71,13 +78,14 @@ export class StampService {
 
   private drawBand(
     page: PDFPage,
+    frame: PageFrame,
     band: HeaderFooter,
     isHeader: boolean,
     config: StampConfig,
     font: PDFFont,
     ctx: { page: number; total: number; date: string }
   ): void {
-    const { width: W, height: H } = page.getSize()
+    const { width: W, height: H } = frame
     const size = config.hfFontSize
     const color = hexToRgb(config.hfColor)
     const y = isHeader ? H - config.margin - size : config.margin
@@ -89,7 +97,7 @@ export class StampService {
     ]
 
     for (const [raw, align] of cells) {
-      const text = fillPlaceholders(raw, ctx).trim()
+      const text = toEncodable(fillPlaceholders(raw, ctx).trim(), font)
       if (!text) continue
       const textWidth = font.widthOfTextAtSize(text, size)
       const x =

@@ -3,13 +3,10 @@ import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage, type RGB }
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import { FileService } from './file.service'
-import type {
-  Annotation,
-  DocumentId,
-  ImageAnnotation,
-  OpenDocumentDTO,
-  RectArea
-} from '@shared/ipc-contract'
+import { bytesFromBase64 } from './base64'
+import { drawInFrame, frameBox, pageFrame, type PageFrame } from './page-frame'
+import { toEncodable } from './winansi'
+import type { Annotation, DocumentId, ImageAnnotation, OpenDocumentDTO } from '@shared/ipc-contract'
 
 // Notas: tamaños relativos a la página para que el PDF grabado coincida con la
 // nota del overlay (que usa unidades cq* a 1.5cqh / 36cqw / padding 0.6cqh).
@@ -22,8 +19,10 @@ const TEXT_MAX_WIDTH_FRAC = 0.6 // coincide con el max-width 60% del overlay
 /**
  * Lógica del módulo "annotations". "Graba" (burn) las anotaciones que el
  * usuario dibujó en el overlay del renderer dentro del contenido del PDF,
- * usando pdf-lib. Las coordenadas llegan normalizadas (0..1, origen arriba);
- * aquí se convierten a puntos PDF (origen abajo-izquierda).
+ * usando pdf-lib. Las coordenadas llegan normalizadas (0..1, origen arriba) y
+ * relativas a la página TAL COMO SE VE: se dibuja en ese marco (`page-frame.ts`),
+ * así lo grabado queda donde se colocó y derecho también en páginas giradas o
+ * recortadas. Los textos se adaptan a la fuente estándar (`winansi.ts`).
  *
  * Limitación conocida: las anotaciones se aplanan en el contenido (no quedan
  * como objetos de anotación re-editables al reabrir). Es una mejora futura.
@@ -35,7 +34,7 @@ export class AnnotationsService {
   ) {}
 
   async burn(id: DocumentId, annotations: Annotation[]): Promise<OpenDocumentDTO> {
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
     if (annotations.length === 0) return this.documents.describe(id)
 
     let pdf: PDFDocument
@@ -51,11 +50,12 @@ export class AnnotationsService {
     for (const ann of annotations) {
       const page = pages[ann.page - 1]
       if (!page) continue
+      const frame = pageFrame(page)
       // Las imágenes requieren embebido asíncrono; el resto es síncrono.
       if (ann.type === 'image') {
-        await this.drawImage(pdf, page, ann)
+        await this.drawImage(pdf, page, ann, frame)
       } else {
-        this.draw(page, ann, font)
+        drawInFrame(page, frame, () => this.draw(page, ann, font, frame))
       }
     }
 
@@ -80,31 +80,32 @@ export class AnnotationsService {
   private async drawImage(
     pdf: PDFDocument,
     page: PDFPage,
-    ann: ImageAnnotation
+    ann: ImageAnnotation,
+    frame: PageFrame
   ): Promise<void> {
-    const { width: W, height: H } = page.getSize()
-    const bytes = Buffer.from(ann.dataBase64, 'base64')
+    const bytes = bytesFromBase64(ann.dataBase64)
     const image = ann.format === 'png' ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes)
-    page.drawImage(image, toPdfRect(ann.rect, W, H))
+    drawInFrame(page, frame, () => page.drawImage(image, frameBox(ann.rect, frame)))
   }
 
-  private draw(page: PDFPage, ann: Annotation, font: PDFFont): void {
-    const { width: W, height: H } = page.getSize()
+  /** Dibuja una anotación en el marco visible de la página (coordenadas del marco). */
+  private draw(page: PDFPage, ann: Annotation, font: PDFFont, frame: PageFrame): void {
+    const { width: W, height: H } = frame
     const color = hexToRgb(ann.color)
 
     switch (ann.type) {
       case 'highlight': {
-        const r = toPdfRect(ann.rect, W, H)
+        const r = frameBox(ann.rect, frame)
         page.drawRectangle({ ...r, color, opacity: 0.35 })
         break
       }
       case 'rect': {
-        const r = toPdfRect(ann.rect, W, H)
+        const r = frameBox(ann.rect, frame)
         page.drawRectangle({ ...r, borderColor: color, borderWidth: 1.5, opacity: 0 })
         break
       }
       case 'underline': {
-        const r = toPdfRect(ann.rect, W, H)
+        const r = frameBox(ann.rect, frame)
         const thickness = Math.max(1, 0.004 * H)
         page.drawRectangle({
           x: r.x,
@@ -130,14 +131,14 @@ export class AnnotationsService {
         break
       }
       case 'note':
-        this.drawNote(page, ann.pos, ann.text, color, W, H, font)
+        this.drawNote(page, ann.pos, toEncodable(ann.text, font), color, W, H, font)
         break
       case 'text': {
         const size = Math.max(4, ann.size * H)
         const x0 = ann.pos.x * W
         // Ajuste de línea como en pantalla (max-width 60%), sin salirse de la hoja.
         const maxWidth = Math.max(40, Math.min(W * TEXT_MAX_WIDTH_FRAC, W - x0 - 4))
-        const lines = wrapLines(ann.text || '', font, size, maxWidth)
+        const lines = wrapLines(toEncodable(ann.text || '', font), font, size, maxWidth)
         lines.forEach((line, i) => {
           try {
             page.drawText(line, {
@@ -206,20 +207,6 @@ export class AnnotationsService {
         color: rgb(0.13, 0.13, 0.13)
       })
     })
-  }
-}
-
-/** Convierte un rect normalizado (origen arriba) a coords PDF (origen abajo). */
-function toPdfRect(
-  rect: RectArea,
-  W: number,
-  H: number
-): { x: number; y: number; width: number; height: number } {
-  return {
-    x: rect.x * W,
-    y: H - (rect.y + rect.h) * H,
-    width: rect.w * W,
-    height: rect.h * H
   }
 }
 

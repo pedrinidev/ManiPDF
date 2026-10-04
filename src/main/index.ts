@@ -16,6 +16,7 @@ import { CombineService } from './services/combine.service'
 import { CompareService } from './services/compare.service'
 import { SeparationsService } from './services/separations.service'
 import { PrintService } from './services/print.service'
+import { removeStaleTempDirs } from './services/temp'
 import { registerDocumentIpc } from './ipc/document.ipc'
 import { registerPagesIpc } from './ipc/pages.ipc'
 import { registerAnnotationsIpc } from './ipc/annotations.ipc'
@@ -30,6 +31,7 @@ import { registerCombineIpc } from './ipc/combine.ipc'
 import { registerCompareIpc } from './ipc/compare.ipc'
 import { registerSeparationsIpc } from './ipc/separations.ipc'
 import { registerPrintIpc } from './ipc/print.ipc'
+import { buildMenuTemplate } from './menu'
 
 /** Estado de "cambios sin guardar" que reporta el renderer (para el aviso al cerrar). */
 let documentDirty = false
@@ -40,6 +42,42 @@ let mainWindow: BrowserWindow | null = null
 const pendingOpen: string[] = []
 /** true cuando el renderer ya montó y escucha aperturas. */
 let rendererReady = false
+
+/**
+ * Cierre de la ventana con cambios: el renderer pregunta documento a documento
+ * (Guardar / Cancelar / Descartar). `acked`: el renderer recibió la petición;
+ * `quitAfter`: el cierre venía de salir de la app (Cmd+Q).
+ */
+let closeRequest: { acked: boolean; quitAfter: boolean } | null = null
+/** El cierre ya está resuelto: el siguiente 'close' no vuelve a preguntar. */
+let closeApproved = false
+/** Se pidió salir de la app (Cmd+Q / menú): tras resolver el cierre, se sale. */
+let quitRequested = false
+/** Si el renderer no confirma la petición en este tiempo (colgado), aviso nativo. */
+const CLOSE_ACK_TIMEOUT_MS = 2000
+
+/** Cierra la ventana sin volver a preguntar (y sale de la app si se pidió). */
+function finishClose(window: BrowserWindow, quitAfter: boolean): void {
+  closeApproved = true
+  documentDirty = false
+  if (!window.isDestroyed()) window.close()
+  if (quitAfter) app.quit()
+}
+
+/** Aviso nativo de respaldo (sin «Guardar»: guardar lo hace el renderer). */
+function nativeCloseDialog(window: BrowserWindow, quitAfter: boolean): void {
+  if (window.isDestroyed()) return
+  const choice = dialog.showMessageBoxSync(window, {
+    type: 'warning',
+    buttons: ['Cancelar', 'Cerrar sin guardar'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'Cambios sin guardar',
+    message: 'El documento tiene cambios sin guardar.',
+    detail: '¿Cerrar de todas formas? Se perderán los cambios no guardados.'
+  })
+  if (choice !== 0) finishClose(window, quitAfter)
+}
 
 /** Devuelve la ruta de un .pdf existente entre los argumentos, o null. */
 function pdfFromArgv(argv: string[]): string | null {
@@ -54,6 +92,18 @@ function openInRenderer(path: string): void {
     mainWindow.focus()
   } else {
     pendingOpen.push(path)
+    // macOS: la app sigue abierta sin ventanas. Abrir un PDF desde Finder no hacía
+    // nada hasta pulsar el Dock; ahora se abre una ventana (que recoge la cola).
+    if (app.isReady() && (!mainWindow || mainWindow.isDestroyed())) mainWindow = createWindow()
+  }
+}
+
+/** Solo se abren fuera de la app enlaces web y de correo (no file:, smb:, etc.). */
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    return ['http:', 'https:', 'mailto:'].includes(new URL(url).protocol)
+  } catch {
+    return false
   }
 }
 
@@ -89,6 +139,26 @@ function registerModules(): void {
     const paths = [...pendingOpen]
     pendingOpen.length = 0
     return paths
+  })
+
+  // Respuesta del renderer a 'app:close-requested' (ver el 'close' de la ventana).
+  ipcMain.on('app:close-request-ack', () => {
+    if (closeRequest) closeRequest.acked = true
+  })
+  ipcMain.on('app:close-request-done', (event, approved: unknown) => {
+    const request = closeRequest
+    closeRequest = null
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (request && window && approved === true) finishClose(window, request.quitAfter)
+  })
+
+  // Qué rutas de la lista siguen existiendo (la lista de recientes las muestra solo
+  // si existen). Entrada validada: hasta 50 rutas de texto.
+  ipcMain.handle('app:existing-paths', (_e, paths: unknown) => {
+    if (!Array.isArray(paths)) return []
+    return paths
+      .slice(0, 50)
+      .filter((p): p is string => typeof p === 'string' && p.length > 0 && existsSync(p))
   })
 
   // Primera ejecución tras instalar: devuelve true SOLO la primera vez (luego deja
@@ -141,7 +211,10 @@ function registerModules(): void {
   const optimizeService = new OptimizeService(documentService)
   const convertService = new ConvertService(fileService)
   const formsService = new FormsService(documentService)
-  const ocrService = new OcrService(documentService, fileService)
+  // Los modelos de idioma del OCR se guardan en la carpeta de datos de la app.
+  const ocrService = new OcrService(documentService, fileService, {
+    cacheDir: join(app.getPath('userData'), 'tessdata')
+  })
   const stampService = new StampService(documentService)
   const redactService = new RedactService(documentService)
   const combineService = new CombineService(documentService, fileService)
@@ -181,7 +254,10 @@ function createWindow(): BrowserWindow {
       : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false, // necesario para que el preload use módulos de Node
+      // El preload solo usa módulos permitidos en el sandbox (contextBridge,
+      // ipcRenderer, webUtils): el renderer, que procesa PDFs no confiables, queda
+      // aislado del sistema.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
     }
@@ -189,26 +265,52 @@ function createWindow(): BrowserWindow {
 
   window.on('ready-to-show', () => window.show())
 
-  // Aviso si se intenta cerrar con cambios sin guardar.
+  // La interfaz no usa el zoom de Chromium (el visor tiene el suyo). Chromium lo
+  // guarda entre sesiones y en versiones anteriores Cmd +/− lo activaba: se anula
+  // al cargar para que nadie se quede con la interfaz ampliada y borrosa.
+  window.webContents.on('did-finish-load', () => window.webContents.setZoomLevel(0))
+
+  // Cerrar con cambios sin guardar: el renderer pregunta por cada documento con el
+  // mismo diálogo que al cerrar una pestaña, que SÍ ofrece «Guardar» (el aviso
+  // nativo solo permitía cancelar o perder los cambios).
+  closeApproved = false
   window.on('close', (event) => {
-    if (!documentDirty) return
-    const choice = dialog.showMessageBoxSync(window, {
-      type: 'warning',
-      buttons: ['Cancelar', 'Cerrar sin guardar'],
-      defaultId: 0,
-      cancelId: 0,
-      title: 'Cambios sin guardar',
-      message: 'El documento tiene cambios sin guardar.',
-      detail: '¿Cerrar de todas formas? Se perderán los cambios no guardados.'
-    })
-    if (choice === 0) event.preventDefault()
-    else documentDirty = false
+    const quitAfter = quitRequested
+    quitRequested = false
+    if (!documentDirty || closeApproved) return
+    event.preventDefault()
+    if (closeRequest) return // ya se está preguntando
+    if (!rendererReady || window.webContents.isCrashed()) {
+      nativeCloseDialog(window, quitAfter)
+      return
+    }
+    const request = { acked: false, quitAfter }
+    closeRequest = request
+    window.webContents.send('app:close-requested')
+    setTimeout(() => {
+      if (closeRequest === request && !request.acked) {
+        closeRequest = null
+        nativeCloseDialog(window, quitAfter)
+      }
+    }, CLOSE_ACK_TIMEOUT_MS)
   })
 
-  // Los enlaces externos se abren en el navegador del sistema, no en la app.
+  // Los enlaces externos se abren en el navegador del sistema, no en la app (solo
+  // http/https/mailto: un PDF malicioso no puede lanzar file: u otros protocolos).
   window.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+  // La ventana nunca navega fuera de la interfaz (un enlace o un archivo soltado no
+  // debe sustituirla por otra página con acceso a window.api).
+  window.webContents.on('will-navigate', (event, url) => {
+    if (url !== window.webContents.getURL()) event.preventDefault()
+  })
+  window.on('closed', () => {
+    if (mainWindow === window) {
+      mainWindow = null
+      rendererReady = false
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -254,14 +356,16 @@ if (!gotLock) {
     // nativos, para que combinen con la interfaz oscura de la app.
     nativeTheme.themeSource = 'dark'
 
-    // Windows/Linux: quitamos el menú nativo de Electron (File/Edit/View…), que se
-    // dibuja DENTRO de la ventana y duplicaría nuestro menú propio (Archivo/Editar…).
-    // En macOS lo conservamos: va en la barra del sistema y aporta Cmd+Q, copiar/pegar.
-    if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    // Menú nativo: ninguno en Windows/Linux (duplicaría el nuestro dentro de la
+    // ventana) y uno propio en macOS, sin Recargar ni el zoom de Chromium (ver menu.ts).
+    const menuTemplate = buildMenuTemplate(process.platform, app.isPackaged, app.name)
+    Menu.setApplicationMenu(menuTemplate ? Menu.buildFromTemplate(menuTemplate) : null)
 
     registerModules()
     mainWindow = createWindow()
     maybeRemindUpdate()
+    // Temporales (a veces con el PDF descifrado) que dejó una ejecución cerrada de golpe.
+    void removeStaleTempDirs().catch(() => {})
 
     // Windows/Linux: el PDF con el que se lanzó la app llega como argumento.
     const argvPath = pdfFromArgv(process.argv)
@@ -273,39 +377,63 @@ if (!gotLock) {
   })
 }
 
-/** Días de uso recomendados antes de sugerir actualizar/reinstalar. */
+/** Días de uso de una versión antes de sugerir actualizar/reinstalar. */
 const USAGE_LIMIT_DAYS = 365
+/** Como mucho un recordatorio cada tantos días (antes salía en cada arranque). */
+const REMIND_EVERY_DAYS = 30
 
-/** Fecha de la primera apertura (reutiliza la marca de primera ejecución). */
-function firstOpenDate(): Date | null {
-  const marker = join(app.getPath('userData'), '.manipdf-first-run-done')
-  if (!existsSync(marker)) return null
-  try {
-    const d = new Date(readFileSync(marker, 'utf8').trim())
-    return Number.isNaN(d.getTime()) ? null : d
-  } catch {
-    return null
-  }
+/** Desde cuándo se usa la versión instalada y cuándo se avisó por última vez. */
+interface UpdateReminderState {
+  version: string
+  since: string
+  lastShown?: string
+}
+
+function daysSince(iso: string | undefined): number {
+  const time = iso ? new Date(iso).getTime() : Number.NaN
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : (Date.now() - time) / 86_400_000
 }
 
 /**
- * Si la app lleva instalada más de un año, muestra un recordatorio (no bloquea el
- * uso) para actualizar o reinstalar. Es un aviso del lado cliente.
+ * Si la versión instalada lleva más de un año en uso, recuerda (sin bloquear)
+ * actualizar o reinstalar. La cuenta empieza con cada versión: antes contaba
+ * desde la primera instalación y, tras actualizar, seguía pidiendo actualizar.
  */
 function maybeRemindUpdate(): void {
-  const installed = firstOpenDate()
-  if (!installed) return
-  const days = (Date.now() - installed.getTime()) / 86_400_000
-  if (days < USAGE_LIMIT_DAYS) return
+  const file = join(app.getPath('userData'), '.manipdf-update-reminder.json')
+  const save = (state: UpdateReminderState): void => {
+    try {
+      writeFileSync(file, JSON.stringify(state))
+    } catch {
+      /* sin poder recordarlo, como mucho se repetirá el aviso */
+    }
+  }
+  let state: UpdateReminderState | null = null
+  try {
+    state = JSON.parse(readFileSync(file, 'utf8')) as UpdateReminderState
+  } catch {
+    /* primera vez */
+  }
+  const version = app.getVersion()
+  if (!state || state.version !== version) {
+    save({ version, since: new Date().toISOString() })
+    return
+  }
+  if (daysSince(state.since) < USAGE_LIMIT_DAYS || daysSince(state.lastShown) < REMIND_EVERY_DAYS) return
+  save({ ...state, lastShown: new Date().toISOString() })
   void dialog.showMessageBox({
     type: 'info',
     title: 'ManiPDF',
-    message: 'Llevas más de un año usando ManiPDF',
+    message: 'Llevas más de un año usando esta versión de ManiPDF',
     detail:
       'Te recomendamos actualizar o reinstalar la aplicación para obtener mejoras y correcciones.',
     buttons: ['Entendido']
   })
 }
+
+app.on('before-quit', () => {
+  quitRequested = true
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

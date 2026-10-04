@@ -13,9 +13,39 @@ export function detectPdfVersion(bytes: Uint8Array): string | null {
   return m ? m[1] : null
 }
 
-/** Heurística: el documento está cifrado si su trailer referencia /Encrypt. */
-export function detectEncrypted(bytes: Uint8Array): boolean {
-  return Buffer.from(bytes).toString('latin1').includes('/Encrypt')
+/** Recuento de marcadores de espacio de color en el archivo. */
+export interface ColorMarkers {
+  cmyk: number
+  rgb: number
+  gray: number
+}
+
+const SCAN_CHUNK = 8 * 1024 * 1024
+/** Solape entre trozos: un marcador partido entre dos trozos se cuenta una vez. */
+const SCAN_OVERLAP = 64
+
+const MARKERS: Record<keyof ColorMarkers, RegExp> = {
+  cmyk: /DeviceCMYK|\/N\s+4\b/g,
+  rgb: /DeviceRGB|CalRGB|\/N\s+3\b/g,
+  gray: /DeviceGray|CalGray|\/N\s+1\b/g
+}
+
+/**
+ * Cuenta los marcadores de espacio de color (heurística: no abre los flujos
+ * comprimidos). Recorre el archivo por trozos: antes lo convertía entero en una
+ * cadena, que con más de 512 MB supera el límite de V8 y fallaba.
+ */
+export function countColorMarkers(bytes: Uint8Array, chunkSize = SCAN_CHUNK): ColorMarkers {
+  const counts: ColorMarkers = { cmyk: 0, rgb: 0, gray: 0 }
+  for (let start = 0; start < bytes.length; start += chunkSize) {
+    const own = Math.min(chunkSize, bytes.length - start) // lo que pertenece a este trozo
+    const length = Math.min(own + SCAN_OVERLAP, bytes.length - start)
+    const text = Buffer.from(bytes.buffer, bytes.byteOffset + start, length).toString('latin1')
+    for (const key of Object.keys(MARKERS) as (keyof ColorMarkers)[]) {
+      for (const match of text.matchAll(MARKERS[key])) if ((match.index ?? 0) < own) counts[key]++
+    }
+  }
+  return counts
 }
 
 /**
@@ -23,11 +53,7 @@ export function detectEncrypted(bytes: Uint8Array): boolean {
  * contenido. Es aproximado (no abre cada flujo), suficiente para informar.
  */
 export function detectColorLabel(bytes: Uint8Array): string {
-  const text = Buffer.from(bytes).toString('latin1')
-  const cmyk = (text.match(/DeviceCMYK/g) || []).length + (text.match(/\/N\s+4\b/g) || []).length
-  const rgb =
-    (text.match(/DeviceRGB|CalRGB/g) || []).length + (text.match(/\/N\s+3\b/g) || []).length
-  const gray = (text.match(/DeviceGray|CalGray/g) || []).length + (text.match(/\/N\s+1\b/g) || []).length
+  const { cmyk, rgb, gray } = countColorMarkers(bytes)
   if (cmyk > 0 && rgb > 0) return 'Color (RGB + CMYK)'
   if (cmyk > 0) return 'Color (CMYK)'
   if (rgb > 0) return 'Color (RGB)'

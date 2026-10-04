@@ -12,6 +12,12 @@ import {
 import type { OpenDocumentDTO, RotationDelta } from '@shared/ipc-contract'
 import { useDocument } from './document.store'
 import { pagesClient } from '../services/pages.client'
+import {
+  moveIndex,
+  selectionAfterDuplicate,
+  selectionAfterInsert,
+  selectionAfterReorder
+} from '../services/page-order'
 import { ClientError } from '../services/document.client'
 
 interface PagesContextValue {
@@ -32,17 +38,25 @@ interface PagesContextValue {
 const PagesContext = createContext<PagesContextValue | null>(null)
 
 export function PagesProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { state, applyDocUpdate, reportError } = useDocument()
+  const { state, applyDocUpdate, reportError, flushPendingEdits } = useDocument()
   const doc = state.doc
   const total = doc?.pageCount ?? 0
 
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [busy, setBusy] = useState(false)
   const anchorRef = useRef<number>(0)
+  // Cambio del nº de páginas hecho aquí: su selección ya viene calculada.
+  const ownCountChange = useRef(false)
 
   useEffect(() => setSelected(new Set()), [doc?.id])
   useEffect(() => {
-    setSelected((prev) => new Set([...prev].filter((i) => i < total)))
+    if (ownCountChange.current) {
+      ownCountChange.current = false
+      return
+    }
+    // Otro cambio del nº de páginas (deshacer, rehacer…): los índices ya no
+    // señalan las mismas páginas.
+    setSelected(new Set())
   }, [total])
 
   const select = useCallback((index: number, mods: { shift: boolean; meta: boolean }) => {
@@ -62,11 +76,19 @@ export function PagesProvider({ children }: { children: ReactNode }): JSX.Elemen
     })
   }, [])
 
+  /** Ejecuta la operación y deja seleccionadas las páginas que indique `nextSelection`. */
   const runOp = useCallback(
-    async (op: () => Promise<OpenDocumentDTO>) => {
+    async (op: () => Promise<OpenDocumentDTO>, nextSelection: (updated: OpenDocumentDTO) => number[] | null) => {
       setBusy(true)
       try {
-        applyDocUpdate(await op())
+        const updated = await op()
+        if (updated.pageCount !== total) ownCountChange.current = true
+        applyDocUpdate(updated)
+        const next = nextSelection(updated)
+        if (next) {
+          setSelected(new Set(next))
+          anchorRef.current = next[0] ?? 0
+        }
       } catch (err) {
         if (!(err instanceof ClientError && err.isCancellation)) {
           reportError(err instanceof Error ? err.message : 'Error en la operación de páginas')
@@ -75,30 +97,38 @@ export function PagesProvider({ children }: { children: ReactNode }): JSX.Elemen
         setBusy(false)
       }
     },
-    [applyDocUpdate, reportError]
+    [applyDocUpdate, reportError, total]
   )
 
   const selectedArray = useMemo(() => [...selected].sort((a, b) => a - b), [selected])
   const id = doc?.id ?? ''
 
   const rotate = useCallback(
-    (delta: RotationDelta) => runOp(() => pagesClient.rotate(id, selectedArray, delta)),
+    // Girar no mueve las páginas: la selección se conserva.
+    (delta: RotationDelta) => runOp(() => pagesClient.rotate(id, selectedArray, delta), () => null),
     [id, selectedArray, runOp]
   )
-  const remove = useCallback(() => runOp(() => pagesClient.remove(id, selectedArray)), [id, selectedArray, runOp])
+  const remove = useCallback(
+    () => runOp(() => pagesClient.remove(id, selectedArray), () => []),
+    [id, selectedArray, runOp]
+  )
   const duplicate = useCallback(
-    () => runOp(() => pagesClient.duplicate(id, selectedArray)),
+    () => runOp(() => pagesClient.duplicate(id, selectedArray), () => selectionAfterDuplicate(selectedArray)),
     [id, selectedArray, runOp]
   )
   const insert = useCallback(() => {
     const at = selectedArray.length > 0 ? Math.max(...selectedArray) + 1 : total
-    return runOp(() => pagesClient.insert(id, at))
+    return runOp(
+      () => pagesClient.insert(id, at),
+      (updated) => selectionAfterInsert(Math.min(at, total), updated.pageCount - total)
+    )
   }, [id, selectedArray, total, runOp])
 
   const extract = useCallback(async () => {
     if (!id) return
     setBusy(true)
     try {
+      if (!(await flushPendingEdits())) return // lo extraído incluye lo pendiente
       await pagesClient.extract(id, selectedArray)
     } catch (err) {
       if (!(err instanceof ClientError && err.isCancellation)) {
@@ -107,14 +137,15 @@ export function PagesProvider({ children }: { children: ReactNode }): JSX.Elemen
     } finally {
       setBusy(false)
     }
-  }, [id, selectedArray, reportError])
+  }, [id, selectedArray, reportError, flushPendingEdits])
 
   const reorder = useCallback(
     (from: number, to: number) => {
       if (from === to) return Promise.resolve()
-      return runOp(() => pagesClient.reorder(id, moveIndex(total, from, to)))
+      const order = moveIndex(total, from, to)
+      return runOp(() => pagesClient.reorder(id, order), () => selectionAfterReorder(selectedArray, order))
     },
-    [id, total, runOp]
+    [id, total, selectedArray, runOp]
   )
 
   const value = useMemo(
@@ -136,14 +167,6 @@ export function PagesProvider({ children }: { children: ReactNode }): JSX.Elemen
   )
 
   return <PagesContext.Provider value={value}>{children}</PagesContext.Provider>
-}
-
-/** Permutación al mover el índice `from` a la posición `to`. */
-function moveIndex(total: number, from: number, to: number): number[] {
-  const order = Array.from({ length: total }, (_, i) => i)
-  order.splice(from, 1)
-  order.splice(from < to ? to - 1 : to, 0, from)
-  return order
 }
 
 function rangeBetween(a: number, b: number): number[] {

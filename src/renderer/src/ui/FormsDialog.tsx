@@ -11,7 +11,7 @@ type FieldValues = Record<string, string | boolean>
 /** Botón "Formulario" + modal para detectar y rellenar campos del PDF. */
 export function FormsDialog(): JSX.Element {
   const { state, applyDocUpdate, reportError } = useDocument()
-  const hasDoc = !!state.doc
+  const hasDoc = !!state.doc && !state.doc.readOnly
 
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)

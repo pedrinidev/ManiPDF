@@ -40,7 +40,9 @@ export const IpcChannel = {
   OptimizeRebuildFromImages: 'optimize:rebuild-images',
 
   // Módulo: convert
-  ConvertExportImages: 'convert:export-images',
+  ConvertBeginExport: 'convert:begin-export',
+  ConvertWriteImage: 'convert:write-image',
+  ConvertEndExport: 'convert:end-export',
   ConvertImagesToPdf: 'convert:images-to-pdf',
 
   // Módulo: forms
@@ -93,6 +95,8 @@ export type IpcErrorCode =
   | 'WRONG_PASSWORD' // contraseña incorrecta al descifrar
   | 'DECRYPT_UNSUPPORTED' // no se puede descifrar (falta Ghostscript)
   | 'GHOSTSCRIPT_MISSING' // la función requiere Ghostscript y no está instalado
+  | 'READ_ONLY' // el PDF está protegido: se puede ver pero no modificar (aún)
+  | 'CONFLICT' // el documento cambió mientras se preparaba la operación (reintentar)
   | 'UNKNOWN'
 
 // ---------------------------------------------------------------------------
@@ -136,6 +140,16 @@ export interface DocumentMetadataDTO {
   pageSizes: PageSizeGroup[]
 }
 
+/**
+ * Por qué un documento abierto es de solo lectura:
+ * - 'needs-password': cifrado con contraseña de apertura que aún no se ha introducido.
+ * - 'restricted': sus permisos no permiten modificarlo; se puede desbloquear con la
+ *   contraseña de propietario.
+ * - 'undecryptable': cifrado con un método que no se ha podido descifrar.
+ * Editar un PDF que sigue cifrado en memoria lo corrompía; por eso se bloquea.
+ */
+export type ReadOnlyReason = 'needs-password' | 'restricted' | 'undecryptable'
+
 /** Giro relativo a aplicar a una página, en grados (múltiplos de 90). */
 export type RotationDelta = 90 | 180 | 270 | -90
 
@@ -152,6 +166,14 @@ export interface OpenDocumentDTO {
    */
   data: Uint8Array
   isDirty: boolean
+  /** null = editable. Si no, por qué solo se puede ver (ver ReadOnlyReason). */
+  readOnly: ReadOnlyReason | null
+  /**
+   * Versión de los bytes (sube con cada cambio). Las operaciones que el renderer
+   * prepara rasterizando (censurar, PDF buscable, comprimir rasterizando) la envían
+   * para detectar que el documento cambió mientras tanto.
+   */
+  revision: number
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +289,12 @@ export interface RasterPage {
 
 export type ImageFormat = 'png' | 'jpg'
 
+/**
+ * Tamaño de página al crear un PDF desde imágenes: Carta, A4 (orientadas según la
+ * imagen, que se centra) o el de la propia imagen (a 72 ppp, como mucho un A4).
+ */
+export type ImagePageSize = 'letter' | 'a4' | 'image'
+
 // ---------------------------------------------------------------------------
 // Formularios.
 // ---------------------------------------------------------------------------
@@ -319,9 +347,10 @@ export type OcrLang = 'spa' | 'eng'
 
 /** Página rasterizada que se envía al main para OCR / PDF buscable. */
 export interface OcrInputPage {
+  /** Página del documento (1-based) a la que corresponde la imagen. */
+  pageNumber: number
+  /** La página TAL COMO SE VE (CropBox y rotación aplicados), en JPEG. */
   jpegBase64: string
-  widthPt: number
-  heightPt: number
   imgWidthPx: number
   imgHeightPx: number
 }
@@ -484,21 +513,30 @@ export interface IpcApi {
     response: IpcResult<OpenDocumentDTO>
   }
   [IpcChannel.OptimizeRebuildFromImages]: {
-    request: { id: DocumentId; pages: RasterPage[] }
+    request: { id: DocumentId; pages: RasterPage[]; baseRevision: number }
     response: IpcResult<OpenDocumentDTO>
   }
 
   // -- convert --
-  // PDF -> imágenes: el renderer rasteriza cada página y el main las escribe en
-  // una carpeta elegida por el usuario.
-  [IpcChannel.ConvertExportImages]: {
-    request: { format: ImageFormat; images: string[] } // base64 en orden de página
+  // PDF -> imágenes, PÁGINA A PÁGINA (antes se rasterizaban todas en memoria y se
+  // enviaban de golpe): begin pide la carpeta y crea en ella una subcarpeta nueva
+  // (nunca sobrescribe), write escribe cada imagen según se rasteriza y end cierra.
+  [IpcChannel.ConvertBeginExport]: {
+    request: { baseName: string; format: ImageFormat; total: number }
+    response: IpcResult<{ exportId: string; dir: string }>
+  }
+  [IpcChannel.ConvertWriteImage]: {
+    request: { exportId: string; pageNumber: number; data: Uint8Array }
+    response: IpcResult<void>
+  }
+  [IpcChannel.ConvertEndExport]: {
+    request: { exportId: string }
     response: IpcResult<{ dir: string; count: number }>
   }
   // Imágenes -> PDF: independiente del documento abierto. El main pide los
   // archivos de imagen y ensambla un PDF (una página por imagen).
   [IpcChannel.ConvertImagesToPdf]: {
-    request: void
+    request: { pageSize: ImagePageSize }
     response: IpcResult<{ filePath: string }>
   }
 
@@ -522,7 +560,7 @@ export interface IpcApi {
     response: IpcResult<{ text: string }>
   }
   [IpcChannel.OcrSearchable]: {
-    request: { id: DocumentId; lang: OcrLang; pages: OcrInputPage[] }
+    request: { id: DocumentId; lang: OcrLang; pages: OcrInputPage[]; baseRevision: number }
     response: IpcResult<OpenDocumentDTO>
   }
   [IpcChannel.OcrSaveText]: {
@@ -538,7 +576,7 @@ export interface IpcApi {
 
   // -- redact --
   [IpcChannel.RedactApply]: {
-    request: { id: DocumentId; pages: RedactedPage[] }
+    request: { id: DocumentId; pages: RedactedPage[]; baseRevision: number }
     response: IpcResult<OpenDocumentDTO>
   }
 
@@ -622,14 +660,21 @@ export interface AppApi {
   }
   optimize: {
     lossless(id: DocumentId): Promise<IpcResult<OpenDocumentDTO>>
-    rebuildFromImages(id: DocumentId, pages: RasterPage[]): Promise<IpcResult<OpenDocumentDTO>>
+    rebuildFromImages(
+      id: DocumentId,
+      pages: RasterPage[],
+      baseRevision: number
+    ): Promise<IpcResult<OpenDocumentDTO>>
   }
   convert: {
-    exportImages(
+    beginExport(
+      baseName: string,
       format: ImageFormat,
-      images: string[]
-    ): Promise<IpcResult<{ dir: string; count: number }>>
-    imagesToPdf(): Promise<IpcResult<{ filePath: string }>>
+      total: number
+    ): Promise<IpcResult<{ exportId: string; dir: string }>>
+    writeImage(exportId: string, pageNumber: number, data: Uint8Array): Promise<IpcResult<void>>
+    endExport(exportId: string): Promise<IpcResult<{ dir: string; count: number }>>
+    imagesToPdf(pageSize: ImagePageSize): Promise<IpcResult<{ filePath: string }>>
   }
   forms: {
     list(id: DocumentId): Promise<IpcResult<FormFieldDTO[]>>
@@ -645,7 +690,8 @@ export interface AppApi {
     searchable(
       id: DocumentId,
       lang: OcrLang,
-      pages: OcrInputPage[]
+      pages: OcrInputPage[],
+      baseRevision: number
     ): Promise<IpcResult<OpenDocumentDTO>>
     saveText(text: string): Promise<IpcResult<{ filePath: string }>>
   }
@@ -653,7 +699,7 @@ export interface AppApi {
     apply(id: DocumentId, config: StampConfig): Promise<IpcResult<OpenDocumentDTO>>
   }
   redact: {
-    apply(id: DocumentId, pages: RedactedPage[]): Promise<IpcResult<OpenDocumentDTO>>
+    apply(id: DocumentId, pages: RedactedPage[], baseRevision: number): Promise<IpcResult<OpenDocumentDTO>>
   }
   combine: {
     merge(): Promise<IpcResult<{ filePath: string; pageCount: number }>>
@@ -693,8 +739,18 @@ export interface AppApi {
     firstRun(): Promise<boolean>
     /** Recoge los PDFs que el SO pidió abrir antes de montar la UI (y marca listo). */
     takePendingOpen(): Promise<string[]>
+    /** De una lista de rutas (p. ej. los recientes), las que siguen existiendo en disco. */
+    existingPaths(paths: string[]): Promise<string[]>
     /** Escucha aperturas de PDF solicitadas por el SO mientras la app corre. Devuelve unsubscribe. */
     onOpenPath(cb: (path: string) => void): () => void
+    /**
+     * El usuario cerró la ventana con cambios sin guardar: el renderer confirma que
+     * lo recibió (`closeRequestAck`), resuelve cada documento y responde con
+     * `closeRequestDone(true)` para cerrar o `false` si se canceló.
+     */
+    onCloseRequested(cb: () => void): () => void
+    closeRequestAck(): void
+    closeRequestDone(approved: boolean): void
     /** Diálogo nativo de cambios sin guardar. Devuelve la acción elegida. */
     confirmUnsaved(opts: {
       message: string

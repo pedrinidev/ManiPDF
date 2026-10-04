@@ -7,7 +7,7 @@ import { ClientError } from '../services/document.client'
 
 /** Botón "Unir/Dividir" + modal para combinar varios PDF o dividir el actual. */
 export function CombineDialog(): JSX.Element {
-  const { state, reportError } = useDocument()
+  const { state, reportError, flushPendingEdits } = useDocument()
   const hasDoc = !!state.doc
 
   const [open, setOpen] = useState(false)
@@ -44,6 +44,7 @@ export function CombineDialog(): JSX.Element {
     setBusy(true)
     setMessage(null)
     try {
+      if (!(await flushPendingEdits())) return // las partes incluyen lo pendiente
       const { dir, count } = await combineClient.split(state.doc.id, everyN)
       setMessage(`✅ ${count} archivo(s) creados en: ${dir}`)
     } catch (err) {
@@ -88,7 +89,7 @@ export function CombineDialog(): JSX.Element {
                     />
                   </label>
                   <small className="conv-hint">1 = una página por archivo. Se guardan en la carpeta que elijas.</small>
-                  <button className="btn primary" onClick={split} disabled={busy}>
+                  <button className="btn primary" onClick={split} disabled={busy || !!state.doc?.readOnly}>
                     {busy ? 'Procesando…' : 'Dividir'}
                   </button>
                 </>

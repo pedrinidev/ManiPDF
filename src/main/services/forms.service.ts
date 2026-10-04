@@ -1,5 +1,8 @@
 import {
+  PDFBool,
   PDFDocument,
+  PDFName,
+  degrees,
   PDFTextField,
   PDFCheckBox,
   PDFRadioGroup,
@@ -10,6 +13,7 @@ import {
   type PDFField
 } from 'pdf-lib'
 import { DocumentService, DocumentError } from './document.service'
+import { frameBox, pageFrame, toUserBox, widgetPlacement } from './page-frame'
 import type {
   DocumentId,
   FormFieldDTO,
@@ -45,7 +49,7 @@ export class FormsService {
     values: FormFieldValue[],
     flatten: boolean
   ): Promise<OpenDocumentDTO> {
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
     const pdf = await this.load(doc.bytes)
     const form = pdf.getForm()
 
@@ -55,18 +59,39 @@ export class FormsService {
       if (field) this.applyValue(field, value)
     }
 
-    if (flatten) form.flatten()
+    let bytes: Uint8Array
+    try {
+      if (flatten) form.flatten()
+      bytes = await pdf.save()
+    } catch (err) {
+      // La fuente estándar del formulario no puede dibujar algún carácter del valor
+      // (p. ej. «Ł» o «→»): antes fallaba todo el rellenado.
+      if (!isEncodingError(err)) throw err
+      if (flatten) {
+        throw new DocumentError(
+          'INVALID_PDF',
+          'No se puede aplanar: el texto incluye caracteres que la fuente estándar del PDF no puede dibujar (p. ej. «Ł» o «→»). Rellénalo sin aplanar.'
+        )
+      }
+      // Se guarda el valor tal cual y se pide a los visores que regeneren la
+      // apariencia con sus propias fuentes.
+      form.acroForm.dict.set(PDFName.of('NeedAppearances'), PDFBool.True)
+      bytes = await pdf.save({ updateFieldAppearances: false })
+    }
 
-    doc.replaceBytes(await pdf.save())
+    doc.replaceBytes(bytes)
     return this.documents.describe(id)
   }
 
-  /** Crea campos de formulario nuevos en las posiciones indicadas. */
+  /**
+   * Crea campos de formulario nuevos en las posiciones indicadas. Un nombre que ya
+   * existe en el PDF se renombra («nombre_2»…); antes el campo se omitía en silencio.
+   */
   async create(id: DocumentId, fields: NewFormField[]): Promise<OpenDocumentDTO> {
     if (fields.length === 0) {
       throw new DocumentError('INVALID_PDF', 'No se definió ningún campo')
     }
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
     const pdf = await this.load(doc.bytes)
     const form = pdf.getForm()
     const pages = pdf.getPages()
@@ -74,33 +99,39 @@ export class FormsService {
 
     for (const field of fields) {
       const page = pages[field.page - 1]
-      if (!page || used.has(field.name)) continue
-      const { width: W, height: H } = page.getSize()
+      if (!page) throw new DocumentError('INVALID_PDF', `Página fuera de rango: ${field.page}`)
+      const name = uniqueFieldName(field.name, used)
+      // El rectángulo llega relativo a la página tal como se ve; en una página
+      // girada el widget gira con ella para que su texto quede derecho.
+      const frame = pageFrame(page)
       const box = {
-        x: field.rect.x * W,
-        y: H - (field.rect.y + field.rect.h) * H,
-        width: field.rect.w * W,
-        height: field.rect.h * H
+        ...widgetPlacement(toUserBox(frameBox(field.rect, frame), frame), frame.rotation),
+        rotate: degrees(frame.rotation)
       }
       try {
         if (field.type === 'text') {
-          const tf = form.createTextField(field.name)
+          const tf = form.createTextField(name)
           tf.addToPage(page, box)
           // Tamaño de fuente FIJO: por defecto pdf-lib auto-escala el texto a la
           // altura de la caja (cajas grandes → texto enorme). Lo fijamos a un
           // tamaño legible y constante, independiente del tamaño del campo.
           tf.setFontSize(FIELD_FONT_SIZE)
         } else if (field.type === 'checkbox') {
-          form.createCheckBox(field.name).addToPage(page, box)
+          form.createCheckBox(name).addToPage(page, box)
         } else {
-          const dd = form.createDropdown(field.name)
+          const dd = form.createDropdown(name)
           if (field.options.length > 0) dd.addOptions(field.options)
           dd.addToPage(page, box)
           dd.setFontSize(FIELD_FONT_SIZE)
         }
-        used.add(field.name)
-      } catch {
-        // Nombre inválido/duplicado u otro problema con el campo: se omite.
+        used.add(name)
+      } catch (err) {
+        // Antes se omitía en silencio. Nada se ha guardado aún: el documento queda
+        // como estaba y los campos siguen en el editor para corregirlos.
+        throw new DocumentError(
+          'INVALID_PDF',
+          `No se pudo crear el campo «${name}»: ${err instanceof Error ? err.message : String(err)}`
+        )
       }
     }
 
@@ -170,4 +201,21 @@ export class FormsService {
       throw new DocumentError('INVALID_PDF', 'El PDF no es válido o está dañado')
     }
   }
+}
+
+/** Error de pdf-lib al codificar un carácter que la fuente estándar no tiene. */
+function isEncodingError(err: unknown): boolean {
+  return err instanceof Error && /cannot encode/i.test(err.message)
+}
+
+/**
+ * Nombre libre para un campo nuevo. El punto separa niveles en los nombres de
+ * AcroForm («a.b» = campo «b» dentro de «a»): se sustituye para no colgar el campo
+ * de otro existente.
+ */
+export function uniqueFieldName(requested: string, used: Set<string>): string {
+  const base = requested.trim().replace(/\./g, '_') || 'campo'
+  let name = base
+  for (let n = 2; used.has(name); n++) name = `${base}_${n}`
+  return name
 }

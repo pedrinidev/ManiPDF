@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
+  countColorMarkers,
   detectPdfVersion,
-  detectEncrypted,
   detectColorLabel,
   groupPageSizes,
   sizeLabel
@@ -18,12 +18,16 @@ describe('detectPdfVersion', () => {
   })
 })
 
-describe('detectEncrypted', () => {
-  it('true si referencia /Encrypt', () => {
-    expect(detectEncrypted(b('... /Encrypt 5 0 R ...'))).toBe(true)
+describe('countColorMarkers', () => {
+  it('cuenta una sola vez los marcadores partidos entre trozos o en el solape', () => {
+    // Trozos de 8 bytes: «DeviceCMYK» empieza en el 5 y cruza al segundo trozo.
+    expect(countColorMarkers(b('.....DeviceCMYK.... /DeviceRGB'), 8)).toEqual({ cmyk: 1, rgb: 1, gray: 0 })
+    expect(countColorMarkers(b('/N 4 /N 3 /N 1 /DeviceGray'), 4)).toEqual({ cmyk: 1, rgb: 1, gray: 2 })
   })
-  it('false si no', () => {
-    expect(detectEncrypted(b('contenido normal'))).toBe(false)
+
+  it('funciona con una vista sobre un buffer mayor', () => {
+    const whole = b('xxxx/DeviceCMYKyyyy')
+    expect(countColorMarkers(whole.subarray(4, 15), 3)).toEqual({ cmyk: 1, rgb: 0, gray: 0 })
   })
 })
 

@@ -11,7 +11,7 @@ const EMPTY_HF: HeaderFooter = { left: '', center: '', right: '' }
 /** Botón "Marcas" + modal para marca de agua, encabezado/pie y numeración. */
 export function StampDialog(): JSX.Element {
   const { state, applyDocUpdate, reportError } = useDocument()
-  const hasDoc = !!state.doc
+  const hasDoc = !!state.doc && !state.doc.readOnly
 
   const [open, setOpen] = useState(false)
   const [watermarkText, setWatermarkText] = useState('')

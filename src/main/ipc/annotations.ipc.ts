@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { AnnotationsService } from '../services/annotations.service'
-import { handle } from './handle'
+import { handle, handleExclusive } from './handle'
 import { IpcChannel } from '@shared/ipc-contract'
 import type { Annotation } from '@shared/ipc-contract'
 
@@ -9,7 +9,7 @@ export function registerAnnotationsIpc(service: AnnotationsService): void {
   ipcMain.handle(
     IpcChannel.AnnotationsBurn,
     (_e, args: { id: string; annotations: Annotation[] }) =>
-      handle(() => service.burn(args.id, args.annotations))
+      handleExclusive(args.id, () => service.burn(args.id, args.annotations))
   )
 
   ipcMain.handle(IpcChannel.AnnotationsPickImage, (event) =>

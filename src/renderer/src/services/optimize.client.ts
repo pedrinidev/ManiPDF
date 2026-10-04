@@ -12,8 +12,9 @@ class OptimizeClient {
     return this.unwrap(await window.api.optimize.lossless(id))
   }
 
-  async rebuildFromImages(id: DocumentId, pages: RasterPage[]): Promise<OpenDocumentDTO> {
-    return this.unwrap(await window.api.optimize.rebuildFromImages(id, pages))
+  /** `baseRevision`: versión del documento sobre la que se rasterizaron las páginas. */
+  async rebuildFromImages(id: DocumentId, pages: RasterPage[], baseRevision: number): Promise<OpenDocumentDTO> {
+    return this.unwrap(await window.api.optimize.rebuildFromImages(id, pages, baseRevision))
   }
 }
 

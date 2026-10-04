@@ -10,7 +10,7 @@ import {
 } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { useDocument } from './document.store'
-import { loadPdf, isPasswordError } from '../services/pdf-renderer'
+import { loadPdf, isPasswordError, getPageSizes, type PageSize } from '../services/pdf-renderer'
 import { documentClient, ClientError } from '../services/document.client'
 
 /** Bit de permiso de impresión en pdf.js (PermissionFlag.PRINT). */
@@ -26,6 +26,18 @@ const PDF_PRINT_FLAG = 0x04
  */
 interface PdfContextValue {
   pdf: PDFDocumentProxy | null
+  /**
+   * Tamaño de cada página (puntos, escala 1, CropBox y rotación aplicados). Se
+   * publica junto con `pdf`: si hay `pdf`, hay tamaños.
+   */
+  pageSizes: PageSize[] | null
+  /**
+   * Revisión del documento de la que se cargó `pdf`. Tras una edición, el visor
+   * sigue mostrando la versión anterior hasta que carga la nueva: las operaciones
+   * que rasterizan con `pdf` deben enviar ESTA revisión (y no la del store) para
+   * que el proceso principal detecte que lo rasterizado ya no es lo actual.
+   */
+  revision: number | null
   loading: boolean
   error: string | null
   /** El documento está cifrado y hace falta una contraseña para abrirlo. */
@@ -42,6 +54,8 @@ const PdfContext = createContext<PdfContextValue | null>(null)
 
 interface InternalPdfState {
   pdf: PDFDocumentProxy | null
+  pageSizes: PageSize[] | null
+  revision: number | null
   loading: boolean
   error: string | null
   needsPassword: boolean
@@ -51,6 +65,8 @@ interface InternalPdfState {
 
 const EMPTY: InternalPdfState = {
   pdf: null,
+  pageSizes: null,
+  revision: null,
   loading: false,
   error: null,
   needsPassword: false,
@@ -59,7 +75,7 @@ const EMPTY: InternalPdfState = {
 }
 
 export function PdfProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { state, replaceDoc } = useDocument()
+  const { state, replaceDoc, reportError } = useDocument()
   const doc = state.doc
   const [value, setValue] = useState<InternalPdfState>(EMPTY)
   const currentPdf = useRef<PDFDocumentProxy | null>(null)
@@ -67,8 +83,9 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
   // Identifica el intento de carga vigente: invalida resultados que lleguen tarde
   // (cambios de documento o reintentos de contraseña).
   const attempt = useRef(0)
-  // Bytes del documento actual, para reintentar con contraseña.
+  // Bytes del documento actual, para reintentar con contraseña, y su revisión.
   const dataRef = useRef<Uint8Array | null>(null)
+  const revisionRef = useRef<number | null>(null)
   // Restricción de impresión recordada por documento: tras descifrar, el PDF en
   // memoria ya no tiene permisos, así que conservamos los leídos al introducir la
   // contraseña.
@@ -76,6 +93,7 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
 
   const runLoad = useCallback((data: Uint8Array, password?: string) => {
     const myAttempt = ++attempt.current
+    const revision = revisionRef.current
     setValue((v) => ({ ...v, loading: true, error: null, needsPassword: false }))
 
     loadPdf(data, password)
@@ -99,10 +117,19 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         } catch {
           /* sin info de permisos: se permite por defecto */
         }
+        // Tamaños de página ANTES de publicar: el visor reserva cada hueco desde el
+        // primer pintado (sin saltos de maquetación al hacer zoom o ir a una página).
+        const pageSizes = await getPageSizes(p)
+        if (myAttempt !== attempt.current) {
+          p.destroy()
+          return
+        }
         const prev = currentPdf.current
         currentPdf.current = p
         setValue({
           pdf: p,
+          pageSizes,
+          revision,
           loading: false,
           error: null,
           needsPassword: false,
@@ -117,6 +144,8 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         if (pw) {
           setValue({
             pdf: null,
+            pageSizes: null,
+            revision: null,
             loading: false,
             error: null,
             needsPassword: true,
@@ -127,6 +156,8 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         }
         setValue({
           pdf: null,
+          pageSizes: null,
+          revision: null,
           loading: false,
           error: err instanceof Error ? err.message : 'Error al renderizar',
           needsPassword: false,
@@ -143,6 +174,7 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
       currentPdf.current = null
       currentDocId.current = null
       dataRef.current = null
+      revisionRef.current = null
       setValue(EMPTY)
       return
     }
@@ -157,6 +189,7 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
     }
     currentDocId.current = doc.id
     dataRef.current = doc.data
+    revisionRef.current = doc.revision
     runLoad(doc.data)
   }, [doc?.id, doc?.data, runLoad])
 
@@ -170,8 +203,10 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
       // 1) Verifica la contraseña y LEE los permisos con pdf.js (fiable). Si es
       //    incorrecta, pdf.js lanza PasswordException.
       let printingAllowed = true
+      let verified = false
       try {
         const verify = await loadPdf(data, password)
+        verified = true
         const perms = await verify.getPermissions()
         printingAllowed = perms === null || perms.includes(PDF_PRINT_FLAG)
         verify.destroy()
@@ -179,6 +214,8 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         if (isPasswordError(err)) {
           setValue({
             pdf: null,
+            pageSizes: null,
+            revision: null,
             loading: false,
             error: null,
             needsPassword: true,
@@ -199,14 +236,20 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         const decrypted = await documentClient.unlock(docId, password)
         replaceDoc(decrypted)
       } catch (err) {
-        // Sin Ghostscript: no se puede descifrar para editar, pero sí mostrarlo
-        // con pdf.js usando la contraseña (solo lectura), respetando permisos.
-        if (err instanceof ClientError && err.code === 'DECRYPT_UNSUPPORTED') {
+        // La contraseña es buena (pdf.js la aceptó) pero no se pudo descifrar para
+        // editar: se muestra en solo lectura con pdf.js y se explica el motivo. Antes
+        // decía «Contraseña incorrecta» aunque fuera correcta.
+        if (verified || (err instanceof ClientError && err.code === 'DECRYPT_UNSUPPORTED')) {
           runLoad(data, password)
+          reportError(
+            `Se abre en solo lectura: no se pudo descifrar para editar (${err instanceof Error ? err.message : 'error desconocido'}).`
+          )
           return
         }
         setValue({
           pdf: null,
+          pageSizes: null,
+          revision: null,
           loading: false,
           error: null,
           needsPassword: true,
@@ -215,7 +258,7 @@ export function PdfProvider({ children }: { children: ReactNode }): JSX.Element 
         })
       }
     },
-    [runLoad, replaceDoc]
+    [runLoad, replaceDoc, reportError]
   )
 
   return <PdfContext.Provider value={{ ...value, submitPassword }}>{children}</PdfContext.Provider>

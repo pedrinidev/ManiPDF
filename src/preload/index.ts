@@ -43,13 +43,16 @@ const api: AppApi = {
   },
   optimize: {
     lossless: (id) => ipcRenderer.invoke(IpcChannel.OptimizeLossless, { id }),
-    rebuildFromImages: (id, pages) =>
-      ipcRenderer.invoke(IpcChannel.OptimizeRebuildFromImages, { id, pages })
+    rebuildFromImages: (id, pages, baseRevision) =>
+      ipcRenderer.invoke(IpcChannel.OptimizeRebuildFromImages, { id, pages, baseRevision })
   },
   convert: {
-    exportImages: (format, images) =>
-      ipcRenderer.invoke(IpcChannel.ConvertExportImages, { format, images }),
-    imagesToPdf: () => ipcRenderer.invoke(IpcChannel.ConvertImagesToPdf)
+    beginExport: (baseName, format, total) =>
+      ipcRenderer.invoke(IpcChannel.ConvertBeginExport, { baseName, format, total }),
+    writeImage: (exportId, pageNumber, data) =>
+      ipcRenderer.invoke(IpcChannel.ConvertWriteImage, { exportId, pageNumber, data }),
+    endExport: (exportId) => ipcRenderer.invoke(IpcChannel.ConvertEndExport, { exportId }),
+    imagesToPdf: (pageSize) => ipcRenderer.invoke(IpcChannel.ConvertImagesToPdf, { pageSize })
   },
   forms: {
     list: (id) => ipcRenderer.invoke(IpcChannel.FormsList, { id }),
@@ -59,15 +62,15 @@ const api: AppApi = {
   },
   ocr: {
     extract: (lang, images) => ipcRenderer.invoke(IpcChannel.OcrExtract, { lang, images }),
-    searchable: (id, lang, pages) =>
-      ipcRenderer.invoke(IpcChannel.OcrSearchable, { id, lang, pages }),
+    searchable: (id, lang, pages, baseRevision) =>
+      ipcRenderer.invoke(IpcChannel.OcrSearchable, { id, lang, pages, baseRevision }),
     saveText: (text) => ipcRenderer.invoke(IpcChannel.OcrSaveText, { text })
   },
   stamp: {
     apply: (id, config) => ipcRenderer.invoke(IpcChannel.StampApply, { id, config })
   },
   redact: {
-    apply: (id, pages) => ipcRenderer.invoke(IpcChannel.RedactApply, { id, pages })
+    apply: (id, pages, baseRevision) => ipcRenderer.invoke(IpcChannel.RedactApply, { id, pages, baseRevision })
   },
   combine: {
     merge: () => ipcRenderer.invoke(IpcChannel.CombineMerge),
@@ -93,11 +96,19 @@ const api: AppApi = {
     manualPath: () => ipcRenderer.invoke('app:manual-path'),
     firstRun: () => ipcRenderer.invoke('app:consume-first-run'),
     takePendingOpen: () => ipcRenderer.invoke('app:take-pending-open'),
+    existingPaths: (paths) => ipcRenderer.invoke('app:existing-paths', paths),
     onOpenPath: (cb) => {
       const handler = (_e: unknown, path: string): void => cb(path)
       ipcRenderer.on('app:open-path', handler)
       return () => ipcRenderer.removeListener('app:open-path', handler)
     },
+    onCloseRequested: (cb) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('app:close-requested', handler)
+      return () => ipcRenderer.removeListener('app:close-requested', handler)
+    },
+    closeRequestAck: () => ipcRenderer.send('app:close-request-ack'),
+    closeRequestDone: (approved) => ipcRenderer.send('app:close-request-done', approved),
     confirmUnsaved: (opts) => ipcRenderer.invoke('app:confirm-unsaved', opts)
   }
 }

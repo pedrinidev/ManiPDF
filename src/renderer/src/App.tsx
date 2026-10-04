@@ -7,11 +7,13 @@ import { RedactProvider } from './state/redact.context'
 import { FormBuilderProvider } from './state/formbuilder.context'
 import { SeparationsProvider } from './state/separations.context'
 import { PagesProvider } from './state/pages.context'
+import { NavigationProvider } from './state/navigation.context'
 import { MenuBar } from './ui/MenuBar'
 import { TabBar } from './ui/TabBar'
 import { AnnotationToolbar } from './ui/AnnotationToolbar'
 import { RedactBar } from './ui/RedactBar'
 import { FormBuilderBar } from './ui/FormBuilderBar'
+import { ReadOnlyBanner } from './ui/ReadOnlyBanner'
 import { DocumentScroll } from './ui/DocumentScroll'
 import { BookmarksPanel } from './views/BookmarksPanel'
 import { SeparationPanel } from './views/SeparationPanel'
@@ -105,6 +107,7 @@ export function App(): JSX.Element {
               <FormBuilderProvider>
               <SeparationsProvider>
               <PagesProvider>
+              <NavigationProvider>
               <div className="app">
                 <DragDropHandler />
                 <OpenWithHandler />
@@ -114,6 +117,7 @@ export function App(): JSX.Element {
                 <AnnotationToolbar />
                 <RedactBar />
                 <FormBuilderBar />
+                <ReadOnlyBanner />
                 <ErrorBanner />
                 <div className="workspace">
                   <SeparationPanel />
@@ -122,6 +126,7 @@ export function App(): JSX.Element {
                   <PagesPanel />
                 </div>
               </div>
+              </NavigationProvider>
               </PagesProvider>
               </SeparationsProvider>
               </FormBuilderProvider>

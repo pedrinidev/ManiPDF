@@ -12,12 +12,14 @@ import {
  * compuesto de las tintas activas EN EL PROPIO DOCUMENTO, recalculado en vivo.
  */
 export function SeparationLayer({ pageNumber }: { pageNumber: number }): JSX.Element | null {
-  const { active, enabled, grayView, space, ensurePage, getPlates } = useSeparations()
+  const { active, enabled, grayView, space, ensurePage, releasePage, getPlates } = useSeparations()
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
-    if (active) ensurePage(pageNumber)
-  }, [active, pageNumber, ensurePage])
+    if (!active) return
+    ensurePage(pageNumber)
+    return () => releasePage(pageNumber)
+  }, [active, pageNumber, ensurePage, releasePage])
 
   const plates = getPlates(pageNumber)
 

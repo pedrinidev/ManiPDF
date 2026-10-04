@@ -14,11 +14,12 @@ const MIN_PASSWORD_LENGTH = 6
  * Exporta una copia protegida a disco (no altera el documento abierto).
  */
 export function SecurityDialog(): JSX.Element {
-  const { state, reportError } = useDocument()
-  const hasDoc = !!state.doc
+  const { state, reportError, flushPendingEdits } = useDocument()
+  const hasDoc = !!state.doc && !state.doc.readOnly
 
   const [open, setOpen] = useState(false)
   const [userPassword, setUserPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [ownerPassword, setOwnerPassword] = useState('')
   const [showUser, setShowUser] = useState(false)
   const [showOwner, setShowOwner] = useState(false)
@@ -28,10 +29,13 @@ export function SecurityDialog(): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [savedPath, setSavedPath] = useState<string | null>(null)
 
-  const tooShort = userPassword.trim().length < MIN_PASSWORD_LENGTH
+  const tooShort = userPassword.length < MIN_PASSWORD_LENGTH
+  // Se pide dos veces: un error al teclear dejaba la copia protegida inaccesible.
+  const mismatch = confirmPassword !== userPassword
 
   const reset = (): void => {
     setUserPassword('')
+    setConfirmPassword('')
     setOwnerPassword('')
     setShowUser(false)
     setShowOwner(false)
@@ -47,13 +51,14 @@ export function SecurityDialog(): JSX.Element {
   }
 
   const submit = async (): Promise<void> => {
-    if (!state.doc || tooShort) return
+    if (!state.doc || tooShort || mismatch) return
     setBusy(true)
     setSavedPath(null)
     try {
+      if (!(await flushPendingEdits())) return // la copia protegida incluye lo pendiente
       const filePath = await securityClient.protect(state.doc.id, {
-        userPassword: userPassword.trim(),
-        ownerPassword: ownerPassword.trim() || undefined,
+        userPassword,
+        ownerPassword: ownerPassword || undefined,
         permissions: { printing, copying, modifying }
       })
       setSavedPath(filePath)
@@ -114,13 +119,25 @@ export function SecurityDialog(): JSX.Element {
                 </label>
 
                 <label className="field">
+                  <span>Repite la contraseña de apertura *</span>
+                  <input
+                    type={showUser ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                  {mismatch && confirmPassword.length > 0 && (
+                    <small className="password-hint warn">Las contraseñas no coinciden.</small>
+                  )}
+                </label>
+
+                <label className="field">
                   <span>Contraseña de propietario (opcional)</span>
                   <div className="password-input">
                     <input
                       type={showOwner ? 'text' : 'password'}
                       value={ownerPassword}
                       onChange={(e) => setOwnerPassword(e.target.value)}
-                      placeholder="Para cambiar permisos (si se deja vacía, = apertura)"
+                      placeholder="Para cambiar los permisos más adelante"
                     />
                     <button
                       type="button"
@@ -132,6 +149,10 @@ export function SecurityDialog(): JSX.Element {
                       <Icon name={showOwner ? 'eye-off' : 'eye'} size={16} />
                     </button>
                   </div>
+                  <small className="password-hint">
+                    Si la dejas vacía se genera una aleatoria: los permisos se respetarán, pero nadie
+                    podrá cambiarlos después.
+                  </small>
                 </label>
 
                 <fieldset className="permissions">
@@ -160,7 +181,7 @@ export function SecurityDialog(): JSX.Element {
                 <button
                   className="btn primary"
                   onClick={submit}
-                  disabled={busy || tooShort}
+                  disabled={busy || tooShort || mismatch}
                 >
                   {busy ? 'Cifrando…' : 'Proteger y guardar'}
                 </button>

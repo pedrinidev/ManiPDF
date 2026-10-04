@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type JSX, type PointerEvent as ReactPointe
 import { Viewer } from '../views/Viewer'
 import { useDocument } from '../state/document.store'
 import { usePdf } from '../state/pdf.context'
+import { useNavigation } from '../state/navigation.context'
+import { MAX_ZOOM, MIN_ZOOM, zoomFromWheel } from '../services/zoom'
 
 /** ¿El foco está en un control interactivo? (para no robar la barra espaciadora). */
 function isTyping(): boolean {
@@ -19,6 +21,7 @@ function isTyping(): boolean {
 /**
  * Contenedor desplazable del documento con "mano" estilo InDesign: mantén la
  * barra espaciadora para activar la mano y arrastra para desplazar el documento.
+ * Pellizcar en el trackpad (o Ctrl + rueda) cambia el zoom del visor.
  */
 export function DocumentScroll(): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
@@ -28,11 +31,52 @@ export function DocumentScroll(): JSX.Element {
   // Conservar la posición de scroll cuando el MISMO documento se recarga (p. ej.
   // tras "Grabar en PDF", que reemplaza los bytes). Al cambiar de documento o
   // pestaña se va arriba (comportamiento esperado).
-  const { state } = useDocument()
+  const { state, setZoom } = useDocument()
   const { pdf, loading } = usePdf()
+  const { registerScrollContainer } = useNavigation()
   const docId = state.doc?.id ?? null
   const lastTop = useRef(0)
   const lastDocId = useRef<string | null>(null)
+  const zoomRef = useRef(state.zoom)
+  zoomRef.current = state.zoom
+
+  // La navegación (página actual, ir a página, ancla del zoom) usa este contenedor.
+  useEffect(() => {
+    registerScrollContainer(ref.current)
+    return () => registerScrollContainer(null)
+  }, [registerScrollContainer])
+
+  // Pellizco del trackpad / Ctrl + rueda → zoom del visor. Chromium entrega el
+  // pellizco como rueda con ctrlKey; sin este manejador no hacía nada. El
+  // listener no es pasivo para poder cancelar el zoom propio de Chromium.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let pending = 0
+    let frame = 0
+    const apply = (): void => {
+      frame = 0
+      const current = zoomRef.current
+      const next = zoomFromWheel(current, pending)
+      if (next !== current) {
+        pending = 0
+        setZoom(next)
+      } else if ((current >= MAX_ZOOM && pending < 0) || (current <= MIN_ZOOM && pending > 0)) {
+        pending = 0 // en el límite: no acumular un gesto que no tiene efecto
+      }
+    }
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return // rueda normal: desplazamiento
+      e.preventDefault()
+      pending += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY
+      if (!frame) frame = requestAnimationFrame(apply)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      cancelAnimationFrame(frame)
+    }
+  }, [setZoom])
 
   const onScroll = (): void => {
     if (ref.current && !loading) lastTop.current = ref.current.scrollTop

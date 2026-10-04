@@ -1,6 +1,11 @@
 import { resolve } from 'path'
+import { readFileSync } from 'fs'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+
+// Versión de package.json, la misma que empaqueta electron-builder («Acerca de»
+// la mostraba escrita a mano y se desincronizaba).
+const { version } = JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as { version: string }
 
 export default defineConfig({
   main: {
@@ -27,6 +32,9 @@ export default defineConfig({
       }
     },
     plugins: [react()],
+    define: {
+      __APP_VERSION__: JSON.stringify(version)
+    },
     build: {
       rollupOptions: {
         output: {

@@ -10,7 +10,10 @@ prepress).
 
 - Node.js 20+ (probado con Node 24)
 - npm 10+
-- **Ghostscript** (opcional, solo para *Separación de colores*): `brew install ghostscript`
+- **Ghostscript** para desarrollar (`brew install ghostscript`); los instaladores lo
+  llevan dentro. Se usa en *Separación de colores*, *Exportar en grises*, *Comprimir*
+  (modo estructura) y, como respaldo, para descifrar PDFs protegidos. Sin él, esas
+  funciones avisan y el resto de la app funciona.
 
 ## Desarrollo
 
@@ -23,6 +26,7 @@ npm run dev      # arrancar la app con hot-reload
 
 ```bash
 npm run typecheck   # comprobar tipos (main + renderer)
+npm test            # tests (vitest): servicios reales con Electron simulado
 npm run build       # compilar producción a out/
 npm run start       # previsualizar el build
 npm run package     # generar app sin instalador (carpeta) en dist/
@@ -66,6 +70,8 @@ con certificado (mejoras futuras de nicho). Ver [docs/modules.md](docs/modules.m
 - [Arquitectura](docs/architecture.md) — cómo está construido y por qué
 - [Módulos](docs/modules.md) — qué hay hecho y qué falta
 - [API IPC](docs/api.md) — el contrato renderer ↔ main
+- [Base de datos](docs/database.md) y [flujo móvil](docs/mobile_flow.md) — no aplican (qué se guarda y dónde)
+- [Auditoría y QA](docs/auditoria-qa.md) — fallos encontrados y estado de cada corrección
 
 ## Estructura
 

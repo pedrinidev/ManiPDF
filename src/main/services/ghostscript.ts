@@ -103,6 +103,15 @@ export function ghostscriptEnv(): NodeJS.ProcessEnv {
   return env
 }
 
+/**
+ * Ruta para `-sOutputFile`: Ghostscript interpreta «%» como formato de número de
+ * página (%d), así que «Oferta 50%descuento.pdf» acababa en «Oferta 501escuento.pdf».
+ * Se escapa como «%%».
+ */
+export function gsOutputPath(path: string): string {
+  return path.replace(/%/g, '%%')
+}
+
 /** Mensaje amable (según el sistema) cuando no hay Ghostscript ni empaquetado ni en el sistema. */
 export function ghostscriptMissingMessage(): string {
   const base = 'Esta función necesita Ghostscript, que no se pudo encontrar.'

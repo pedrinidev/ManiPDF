@@ -52,8 +52,9 @@ export function AnnotationToolbar(): JSX.Element | null {
         saveLabel: 'Grabar en PDF'
       })
       if (choice === 'cancel') return
-      if (choice === 'save') await apply()
-      else clear()
+      if (choice === 'save') {
+        if (!(await apply())) return // no se grabó: la barra sigue abierta
+      } else clear()
     }
     setToolbarOpen(false)
   }

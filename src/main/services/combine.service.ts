@@ -3,6 +3,7 @@ import { PDFDocument } from 'pdf-lib'
 import type { BrowserWindow } from 'electron'
 import { DocumentService, DocumentError } from './document.service'
 import { FileService } from './file.service'
+import { pruneDeadPages } from './pdf-cleanup'
 import type { DocumentId } from '@shared/ipc-contract'
 
 /**
@@ -23,15 +24,20 @@ export class CombineService {
 
     const out = await PDFDocument.create()
     for (const path of paths) {
-      let src: PDFDocument
+      let bytes: Uint8Array
       try {
-        src = await PDFDocument.load(await this.files.read(path), { ignoreEncryption: true })
+        bytes = await this.files.read(path)
       } catch {
-        throw new DocumentError('INVALID_PDF', `No se pudo leer un PDF válido: ${basename(path)}`)
+        throw new DocumentError('NOT_FOUND', `No se pudo leer: ${basename(path)}`)
       }
+      // Un PDF cifrado se descifra antes (si sus permisos lo permiten): copiar sus
+      // páginas cifradas producía páginas en blanco.
+      const src = await this.documents.loadForCopy(bytes, basename(path))
       const pages = await out.copyPages(src, src.getPageIndices())
       pages.forEach((p) => out.addPage(p))
     }
+    // copyPages arrastra las páginas a las que apuntan los enlaces internos.
+    pruneDeadPages(out)
 
     const target = await this.files.pickSavePath(window, 'combinado.pdf')
     if (!target) throw new DocumentError('CANCELLED', 'Guardado cancelado por el usuario')
@@ -51,7 +57,7 @@ export class CombineService {
     window: BrowserWindow | null
   ): Promise<{ dir: string; count: number }> {
     const chunk = Math.max(1, Math.floor(everyN))
-    const doc = this.documents.getDocument(id)
+    const doc = this.documents.getEditableDocument(id)
 
     let src: PDFDocument
     try {
@@ -62,10 +68,18 @@ export class CombineService {
     const total = src.getPageCount()
     if (total <= 1) throw new DocumentError('INVALID_PDF', 'El documento tiene una sola página')
 
-    const dir = await this.files.pickDirectory(window)
-    if (!dir) throw new DocumentError('CANCELLED', 'División cancelada por el usuario')
+    const parent = await this.files.pickDirectory(window)
+    if (!parent) throw new DocumentError('CANCELLED', 'División cancelada por el usuario')
 
     const baseName = doc.fileName.replace(/\.pdf$/i, '')
+    // Subcarpeta nueva («‹nombre›-partes»): antes se escribían junto a lo que hubiera
+    // y se sobrescribían partes de otras divisiones sin avisar.
+    let dir: string
+    try {
+      dir = await this.files.createUniqueFolder(parent, `${baseName}-partes`)
+    } catch {
+      throw new DocumentError('IO_ERROR', 'No se pudo crear la carpeta de destino')
+    }
     let count = 0
     const pad = String(Math.ceil(total / chunk)).length
 
@@ -75,6 +89,8 @@ export class CombineService {
         const out = await PDFDocument.create()
         const pages = await out.copyPages(src, indices)
         pages.forEach((p) => out.addPage(p))
+        // Sin las páginas de otras partes que arrastran los enlaces internos.
+        pruneDeadPages(out)
         count++
         const name = `${baseName}-parte-${String(count).padStart(pad, '0')}.pdf`
         await this.files.write(join(dir, name), await out.save())
